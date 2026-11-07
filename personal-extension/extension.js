@@ -4430,7 +4430,8 @@ Narration and pronouns:
 
 Dialogue the model already wrote (keep as is):
 - A quoted dialogue line that already contains Korean is final display text: Korean-only lines, and lines with a foreign-language original followed by a Korean translation in parentheses. Copy such a line exactly as written, character for character, together with its speaker label, quotation marks and parenthetical translation. Do not translate, rephrase, re-pair, reorder or correct it.
-- Text inside quotation marks that contains no Korean at all has not been prepared: translate it into Korean only, in the speaker's voice from the voice notes, without adding foreign-language text or parentheses.
+- A quoted line that contains no Korean at all is a foreign-language line (English included) whose translation is missing: keep the original text exactly as written and add a natural Korean translation in that speaker's voice right after it, in parentheses on the same line: "original line" (한국어 번역).
+- Keep markup tags exactly as written, with their attributes and position, around the same text: for example <speaker="Name">Name | "..." (번역)</speaker>. Never drop, move, translate or rename a tag or its attribute value.
 - Keep metadata lines such as the §RP tag exactly as written.
 - Narration, descriptions, actions and inner thoughts are always translated into Korean.`,
       replace: true,
