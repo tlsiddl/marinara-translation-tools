@@ -2942,7 +2942,7 @@ Only list terms that are names in their own right. Leave out possessive or descr
 
   const SCAN_SPEECH = `You write voice notes that let a translator reproduce each character's way of speaking in natural spoken {{target}}.
 Read each character card (description, personality, scenario, first message, example dialogue), the user's persona, the linked lorebooks and the recent messages.
-Reply with JSON only: {"characters":[{"character":"","age":"","relations":"","speech":"","samples":[]}]}
+Reply with JSON only: {"characters":[{"character":"","age":"","relations":"","language":"","speech":"","samples":[]}]}
 
 One entry for every person who speaks or may speak: the main characters, the user's persona, and the NPCs described in the lorebooks or appearing in the story (at most 20 entries; main characters and the persona first).
 "character" is the name exactly as written in the story.
@@ -2954,6 +2954,7 @@ One entry for every person who speaks or may speak: the main characters, the use
 - the first-person form, and how they address each person (name forms, titles, kinship terms, nicknames), including when the second-person pronoun should be left out rather than translated literally;
 - sentence length and rhythm, interjections, fillers, trailing off, slang or dialect;
 - how their endings, politeness and address change when angry, flustered, teasing or affectionate.
+"language" is written in {{target}}: the language this person actually speaks aloud in the story. Fill it only from what the material says: a stated native or spoken language, a statement that they cannot or barely speak a language, or dialogue the card explicitly presents as their own tongue. Put the main spoken language first and add other languages with their fluency in parentheses, e.g. "영어 (한국어는 서툶)" or "한국어". When the material gives only a nationality, origin or ethnicity and nothing about the language, write the likely language followed by " (추정)", e.g. "영어 (추정)". Leave it empty when nothing points to a language. Never infer it from a name, appearance, or the language the material happens to be written in.
 "samples" is a list of 2 short lines of dialogue written in {{target}}, in that character's exact voice as it would sound in this story.
 Base every point on the material. Call the user by the persona's name, never {{user}} or {{char}}.`;
 
@@ -3101,6 +3102,10 @@ Base every line on the material. If the material says nothing about the world, r
       return raw.replace(/^```[a-z]*\n?|\n?```\s*$/gi, "").trim();
     }
     const material = await collectMaterial(chatId);
+    // The persona is marked in its voice block so the translator knows who "she/he" may be.
+    const personaName = kind === "speech"
+      ? await getChat(chatId).then((chat) => getPersona(chat.personaId)).then((p) => p?.name || "").catch(() => "")
+      : "";
     const system = (kind === "glossary" ? SCAN_GLOSSARY : SCAN_SPEECH).replaceAll("{{target}}", targetLang(chatId));
     const raw = await llm(system, `${material}\n\nReturn the JSON now.`, {
       chatId,
@@ -3121,14 +3126,17 @@ Base every line on the material. If the material says nothing about the world, r
       .map((line) => `"${line}"`)
       .join(" / ");
     const characters = (Array.isArray(data.characters) ? data.characters : []).map((e) => (e && typeof e === "object" ? { ...e, samples: lines(e.samples) } : e));
-    return cleanEntries(characters, ["character", "age", "relations", "speech", "samples"])
+    const samePerson = (a, b) => !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
+    return cleanEntries(characters, ["character", "age", "relations", "language", "speech", "samples"])
       .map((e) => ({ ...e, name: e.character, style: e.speech }))
       .filter((e) => e.name.trim() && e.style.trim())
       .map((e) => ({
         name: e.name,
         style: [
+          samePerson(e.name, personaName) && "- 역할: 유저 페르소나",
           e.age.trim() && `- 나이: ${e.age.trim()}`,
           e.relations.trim() && `- 관계: ${e.relations.trim()}`,
+          e.language.trim() && `- 사용 언어: ${e.language.trim()}`,
           e.style.trim(),
           e.samples.trim() && `- 대사 예시: ${e.samples.trim()}`,
         ]
@@ -3900,7 +3908,7 @@ Base every line on the material. If the material says nothing about the world, r
     const label = { glossary: "단어장 생성", speech: "말투 자동 정리", world: "세계관 자동 정리" }[kind];
     const doing = {
       glossary: "카드·페르소나·로어북·최근 대화에서 용어를 찾는 중입니다…",
-      speech: "캐릭터·페르소나·로어북을 읽고 NPC까지 말투와 나이·관계를 정리하는 중입니다…",
+      speech: "캐릭터·페르소나·로어북을 읽고 NPC까지 말투와 나이·관계·사용 언어를 정리하는 중입니다…",
       world: "카드·페르소나·로어북을 읽고 세계관을 정리하는 중입니다…",
     }[kind];
     return new Promise((resolve) => {
@@ -4355,6 +4363,56 @@ Base every line on the material. If the material says nothing about the world, r
   ];
   const ADDITIONAL_BUILTIN_PRESETS = Object.freeze([
     Object.freeze({
+      id: "builtin-korean-style-foreign-dialogue-generate",
+      name: "한국어 문체·이름 중심·외국인 대사 병기 (외국어 대사 생성)",
+      prompt: `Translate the source into natural Korean. Output only the translation, with no notes or explanations. Preserve meaning, point of view, characterization, emotional nuance, formatting (paragraph breaks, markdown, *asterisks*), and the author's narrative style, pacing, imagery and register. Do not add, omit, censor, soften or invent content.
+
+Narration and pronouns:
+- Resolve he/she/they/him/her/his from the source, the previous context, the glossary and the character voice notes. When the referent is clear, use that person's name in the form the glossary or voice notes give, or leave the subject out where Korean reads naturally without it. Rephrase instead of repeating the same name in back-to-back clauses.
+- Avoid habitual 그, 그녀, 그의, 그녀의. Use them only where a name or omission would make the referent unclear or the sentence awkward.
+- The voice block marked "- 역할: 유저 페르소나" is the user's persona; apply the same rule when she/her or he/him refers to that person.
+- Never guess a referent. If the source is ambiguous, keep it ambiguous in Korean rather than picking a person. Third-person narration stays third person.
+
+Dialogue voice:
+- Follow each speaker's voice notes for speech level, sentence endings, address terms and first-person forms; otherwise infer them from the relationship and the scene. Keep each character's voice consistent.
+
+Spoken language (read the "- 사용 언어:" line in each speaker's voice block):
+- Work out who speaks each quoted line from dialogue tags and context.
+- Korean only: when the speaker's 사용 언어 is Korean, missing, empty or marked "(추정)", or the speaker is unclear.
+- If the notes say the speaker also speaks Korean, use the dual form below only when the source shows that this particular line is spoken in the other language.
+- Do not decide anyone's spoken language from their name, appearance or the language the source is written in.
+- When the speaker's 사용 언어 is another language, give the line in that language followed by the Korean translation in the dual form. If the source line is already written in that language, keep it exactly as written. Otherwise write it in that language yourself as a faithful translation of the source line: same meaning, tone and length, nothing added. If you cannot write that language reliably, use Korean only.
+- Dual form: "foreign line" (한국어 번역) — the foreign line inside the source quotation marks, a space, then a natural Korean translation in that speaker's voice in parentheses.
+- This applies only to spoken dialogue in quotation marks. Narration, actions and inner thoughts are always Korean only.`,
+      replace: true,
+      builtin: true,
+    }),
+    Object.freeze({
+      id: "builtin-korean-style-foreign-dialogue",
+      name: "한국어 문체·이름 중심·외국인 대사 병기 (원문 있을 때만)",
+      prompt: `Translate the source into natural Korean. Output only the translation, with no notes or explanations. Preserve meaning, point of view, characterization, emotional nuance, formatting (paragraph breaks, markdown, *asterisks*), and the author's narrative style, pacing, imagery and register. Do not add, omit, censor, soften or invent content.
+
+Narration and pronouns:
+- Resolve he/she/they/him/her/his from the source, the previous context, the glossary and the character voice notes. When the referent is clear, use that person's name in the form the glossary or voice notes give, or leave the subject out where Korean reads naturally without it. Rephrase instead of repeating the same name in back-to-back clauses.
+- Avoid habitual 그, 그녀, 그의, 그녀의. Use them only where a name or omission would make the referent unclear or the sentence awkward.
+- The voice block marked "- 역할: 유저 페르소나" is the user's persona; apply the same rule when she/her or he/him refers to that person.
+- Never guess a referent. If the source is ambiguous, keep it ambiguous in Korean rather than picking a person. Third-person narration stays third person.
+
+Dialogue voice:
+- Follow each speaker's voice notes for speech level, sentence endings, address terms and first-person forms; otherwise infer them from the relationship and the scene. Keep each character's voice consistent.
+
+Spoken language (read the "- 사용 언어:" line in each speaker's voice block):
+- Work out who speaks each quoted line from dialogue tags and context.
+- Korean only: when the speaker's 사용 언어 is Korean, missing, empty or marked "(추정)", or the speaker is unclear.
+- If the notes say the speaker also speaks Korean, use the dual form below only when the source shows that this particular line is spoken in the other language.
+- Do not decide anyone's spoken language from their name, appearance or the language the source is written in.
+- When the speaker's 사용 언어 is another language and the line in the source is actually written in that language, keep the line exactly as written and add the Korean translation in the dual form. When the line is written in any other language, translate it into Korean only. Never write new foreign-language text.
+- Dual form: "foreign line" (한국어 번역) — the foreign line inside the source quotation marks, a space, then a natural Korean translation in that speaker's voice in parentheses.
+- This applies only to spoken dialogue in quotation marks. Narration, actions and inner thoughts are always Korean only.`,
+      replace: true,
+      builtin: true,
+    }),
+    Object.freeze({
       id: "builtin-english-paraphrase-korean",
       name: "영어→한국어 의역·문학·RP",
       prompt: MARINARA_TRANSLATION_PARAPHRASE_PROMPTS.english,
@@ -4392,6 +4450,8 @@ Base every line on the material. If the material says nothing about the world, r
   ]);
   const BUILTIN_PRESET_ORDER = new Map([
     "builtin-inherit",
+    "builtin-korean-style-foreign-dialogue",
+    "builtin-korean-style-foreign-dialogue-generate",
     "builtin-roleplay",
     "builtin-literary-roleplay",
     "builtin-literary-roleplay-input",
@@ -4619,8 +4679,18 @@ Base every line on the material. If the material says nothing about the world, r
     return MARINARA_TRANSLATION_REFERENCE_RENDERERS.freeContext(escaped);
   }
 
+  /** Presets whose text changed after release; Marinara's prompt field may still hold an older copy. */
+  const LIVE_PROMPT_PRESET_IDS = new Set(["builtin-korean-style-foreign-dialogue", "builtin-korean-style-foreign-dialogue-generate"]);
+
+  function livePresetPrompt(scope) {
+    if (!LIVE_PROMPT_PRESET_IDS.has(scope.incomingPresetId)) return "";
+    const preset = storedConfig?.presets.find((item) => item.id === scope.incomingPresetId);
+    return preset?.replace ? preset.prompt : "";
+  }
+
   function buildSystemPrompt(body, hasContext = false, scope = currentScope(), glossary = "", incoming = false, lore = "") {
-    const existing = typeof body.systemPrompt === "string" ? stripIncomingVoiceInstruction(body.systemPrompt) : "";
+    const live = incoming ? livePresetPrompt(scope) : "";
+    const existing = live || (typeof body.systemPrompt === "string" ? stripIncomingVoiceInstruction(body.systemPrompt) : "");
     const voice = incoming ? voiceSection(scope) : "";
     const filled = fillPromptMacros(existing || BASE_PROMPT, voice, glossary ? `${GLOSSARY_RULE}\n${glossary}` : "");
     const sections = [filled.text];
@@ -4890,7 +4960,7 @@ Base every line on the material. If the material says nothing about the world, r
       const incoming = context?.incoming ?? isIncomingTranslation(body, scope);
       const glossary = glossarySection(scope.glossary, body.text, body.targetLanguage);
       // With {{vocab}} in the prompt the glossary goes there instead of in front of the text.
-      const usesVocab = VOCAB_MACRO_TEST.test(typeof body.systemPrompt === "string" ? body.systemPrompt : "");
+      const usesVocab = VOCAB_MACRO_TEST.test((incoming && livePresetPrompt(scope)) || (typeof body.systemPrompt === "string" ? body.systemPrompt : ""));
       const contextual = await buildContextualText(input, init, body, scope, context, usesVocab ? "" : glossary);
       const systemPrompt = buildSystemPrompt(body, contextual.hasContext, scope, glossary, incoming, await scopeLore(scope));
       if (systemPrompt.length > SYSTEM_PROMPT_MAX && currentConnectionId) {
