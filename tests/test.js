@@ -1,6 +1,6 @@
 // Loads the extension in Chromium with a mocked Marinara runtime and checks:
 // 1) scanChat turns the model's JSON into voice blocks with 역할/사용 언어 lines
-// 2) a manual /api/translate request uses the live preset text (not the stale field) plus voice notes
+// 2) a manual /api/translate request uses the live preset text (not the stale field) plus voice notes and the persona name
 const fs = require("fs");
 const { chromium } = require("playwright");
 const file = process.argv[2];
@@ -62,9 +62,12 @@ ${scanSrc}
         sent.push(JSON.parse(init?.body ?? (await input.text())));
         return new Response(JSON.stringify({ translatedText: "ok" }), { status: 200 });
       }
+      if (url.includes("/chats/c1")) return new Response(JSON.stringify({ id: "c1", personaId: "p1" }), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (url.includes("/personas/p1")) return new Response(JSON.stringify({ id: "p1", name: "Mina" }), { status: 200, headers: { "Content-Type": "application/json" } });
       return new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } });
     };
     window.fetch = realFetch;
+    localStorage.setItem("marinara-active-chat-id", "c1");
     const config = {
       defaults: {
         incomingPresetId: "builtin-korean-style-foreign-dialogue-generate",
@@ -93,6 +96,7 @@ ${scanSrc}
   check("request intercepted", !!sp);
   check("stale field prompt replaced by live preset", !sp.includes("STALE OLD PROMPT") && sp.includes("write it in that language yourself"));
   check("voice notes with 사용 언어 appended", sp.includes("# Character Voice Instructions") && sp.includes("- 사용 언어: 영어"));
+  check("persona name injected", sp.includes("# User Persona") && sp.includes("persona is named \"Mina\""));
   check("system prompt under 5000 chars (no raw fallback needed)", sp.length < 5000);
   console.log("system prompt length:", sp.length);
   process.exit(failed ? 1 : 0);

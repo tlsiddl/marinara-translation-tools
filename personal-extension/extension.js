@@ -4250,6 +4250,7 @@ Base every line on the material. If the material says nothing about the world, r
     escapeHtml,
     refresh: () => { openState.clear(); renderSoon(); },
     getChat,
+    getPersona,
   };
 }
 
@@ -4377,9 +4378,11 @@ Dialogue voice:
 - Follow each speaker's voice notes for speech level, sentence endings, address terms and first-person forms; otherwise infer them from the relationship and the scene. Keep each character's voice consistent.
 
 Spoken language (read the "- 사용 언어:" line in each speaker's voice block):
+- Foreign language means any language other than Korean, regardless of the source text's language.
 - Work out who speaks each quoted line from dialogue tags and context.
 - Korean only: when the speaker's 사용 언어 is Korean, missing, empty or marked "(추정)", or the speaker is unclear.
-- If the notes say the speaker also speaks Korean, use the dual form below only when the source shows that this particular line is spoken in the other language.
+- If a speaker has no voice block, treat them as Korean-speaking (Korean only).
+- If 사용 언어 lists Korean plus another language, use the dual form only when the source line itself is in the other language; otherwise Korean only.
 - Do not decide anyone's spoken language from their name, appearance or the language the source is written in.
 - When the speaker's 사용 언어 is another language, give the line in that language followed by the Korean translation in the dual form. If the source line is already written in that language, keep it exactly as written. Otherwise write it in that language yourself as a faithful translation of the source line: same meaning, tone and length, nothing added. If you cannot write that language reliably, use Korean only.
 - Dual form: "foreign line" (한국어 번역) — the foreign line inside the source quotation marks, a space, then a natural Korean translation in that speaker's voice in parentheses.
@@ -4402,9 +4405,11 @@ Dialogue voice:
 - Follow each speaker's voice notes for speech level, sentence endings, address terms and first-person forms; otherwise infer them from the relationship and the scene. Keep each character's voice consistent.
 
 Spoken language (read the "- 사용 언어:" line in each speaker's voice block):
+- Foreign language means any language other than Korean, regardless of the source text's language.
 - Work out who speaks each quoted line from dialogue tags and context.
 - Korean only: when the speaker's 사용 언어 is Korean, missing, empty or marked "(추정)", or the speaker is unclear.
-- If the notes say the speaker also speaks Korean, use the dual form below only when the source shows that this particular line is spoken in the other language.
+- If a speaker has no voice block, treat them as Korean-speaking (Korean only).
+- If 사용 언어 lists Korean plus another language, use the dual form only when the source line itself is in the other language.
 - Do not decide anyone's spoken language from their name, appearance or the language the source is written in.
 - When the speaker's 사용 언어 is another language and the line in the source is actually written in that language, keep the line exactly as written and add the Korean translation in the dual form. When the line is written in any other language, translate it into Korean only. Never write new foreign-language text.
 - Dual form: "foreign line" (한국어 번역) — the foreign line inside the source quotation marks, a space, then a natural Korean translation in that speaker's voice in parentheses.
@@ -4688,7 +4693,29 @@ Spoken language (read the "- 사용 언어:" line in each speaker's voice block)
     return preset?.replace ? preset.prompt : "";
   }
 
-  function buildSystemPrompt(body, hasContext = false, scope = currentScope(), glossary = "", incoming = false, lore = "") {
+  const personaNameCache = new Map();
+
+  /** Persona name of a chat, for the two live presets only; "" when it cannot be resolved. */
+  async function personaSection(scope, chatId) {
+    try {
+      if (!chatId || !LIVE_PROMPT_PRESET_IDS.has(scope.incomingPresetId)) return "";
+      const chat = await paragraph.getChat(chatId);
+      const personaId = chat?.personaId;
+      if (!personaId) return "";
+      let name = personaNameCache.get(personaId);
+      if (name === undefined) {
+        name = String((await paragraph.getPersona(personaId))?.name || "").trim();
+        if (name) personaNameCache.set(personaId, name);
+      }
+      if (!name) return "";
+      return `# User Persona
+The user's persona is named "${name}". When she/her/he/him/they or similar refer to the user's persona, use "${name}" or omit naturally; do not use 그/그녀 for them.`;
+    } catch {
+      return "";
+    }
+  }
+
+  function buildSystemPrompt(body, hasContext = false, scope = currentScope(), glossary = "", incoming = false, lore = "", persona = "") {
     const live = incoming ? livePresetPrompt(scope) : "";
     const existing = live || (typeof body.systemPrompt === "string" ? stripIncomingVoiceInstruction(body.systemPrompt) : "");
     const voice = incoming ? voiceSection(scope) : "";
@@ -4698,6 +4725,7 @@ Spoken language (read the "- 사용 언어:" line in each speaker's voice block)
     const freeContext = scope.freeContextEnabled ? freeContextSection(scope.freeContext, lore) : "";
     if (freeContext) sections.push(freeContext);
     if (voice && !filled.hasVoice) sections.push(voice);
+    if (incoming && persona) sections.push(persona);
     if (hasContext) sections.push(CONTEXT_SYSTEM_INSTRUCTIONS);
     return sections.filter(Boolean).join("\n\n");
   }
@@ -4962,7 +4990,7 @@ Spoken language (read the "- 사용 언어:" line in each speaker's voice block)
       // With {{vocab}} in the prompt the glossary goes there instead of in front of the text.
       const usesVocab = VOCAB_MACRO_TEST.test((incoming && livePresetPrompt(scope)) || (typeof body.systemPrompt === "string" ? body.systemPrompt : ""));
       const contextual = await buildContextualText(input, init, body, scope, context, usesVocab ? "" : glossary);
-      const systemPrompt = buildSystemPrompt(body, contextual.hasContext, scope, glossary, incoming, await scopeLore(scope));
+      const systemPrompt = buildSystemPrompt(body, contextual.hasContext, scope, glossary, incoming, await scopeLore(scope), incoming ? await personaSection(scope, context?.chatId ?? activeChatId) : "");
       if (systemPrompt.length > SYSTEM_PROMPT_MAX && currentConnectionId) {
         return rawTranslate(input, init, body, systemPrompt, contextual.text);
       }
@@ -6349,19 +6377,36 @@ Spoken language (read the "- 사용 언어:" line in each speaker's voice block)
   const restoreAutomaticTranslation = () => automaticTranslation.pagehide();
   window.addEventListener("pagehide", restoreAutomaticTranslation);
   window.fetch = managedFetch;
-  const observer = new MutationObserver(() => {
-    if (injectQueued) return;
-    injectQueued = true;
-    marinara.setTimeout(injectPanels, 0);
-  });
-  observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["aria-expanded"] });
-
-  const chatPoll = marinara.setInterval(() => {
+  function checkActiveChat() {
     const nextChatId = readActiveChatId();
     if (nextChatId === activeChatId) return;
     activeChatId = nextChatId;
     populateAllForms();
-  }, 250);
+  }
+
+  const observer = new MutationObserver(() => {
+    if (injectQueued) return;
+    injectQueued = true;
+    marinara.setTimeout(() => { checkActiveChat(); injectPanels(); }, 0);
+  });
+  observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["aria-expanded"] });
+
+  const originalPushState = history.pushState;
+  const originalReplaceState = history.replaceState;
+  const wrapHistory = (original) => function (...args) {
+    const result = original.apply(this, args);
+    marinara.setTimeout(checkActiveChat, 0);
+    return result;
+  };
+  const wrappedPushState = wrapHistory(originalPushState);
+  const wrappedReplaceState = wrapHistory(originalReplaceState);
+  if (!originalPushState.__ptxWrapped) {
+    wrappedPushState.__ptxWrapped = wrappedReplaceState.__ptxWrapped = true;
+    history.pushState = wrappedPushState;
+    history.replaceState = wrappedReplaceState;
+  }
+  window.addEventListener("popstate", checkActiveChat);
+  window.addEventListener("hashchange", checkActiveChat);
 
   marinara.onCleanup(() => {
     runtimeActive = false;
@@ -6370,7 +6415,10 @@ Spoken language (read the "- 사용 언어:" line in each speaker's voice block)
     const restoration = automaticTranslation.cleanup();
     paragraph.cleanup();
     observer.disconnect();
-    marinara.clearInterval(chatPoll);
+    window.removeEventListener("popstate", checkActiveChat);
+    window.removeEventListener("hashchange", checkActiveChat);
+    if (history.pushState === wrappedPushState) history.pushState = originalPushState;
+    if (history.replaceState === wrappedReplaceState) history.replaceState = originalReplaceState;
     style.remove();
     document.querySelectorAll(`[${PANEL_ATTRIBUTE}]`).forEach((panel) => panel.remove());
     forms.clear();
