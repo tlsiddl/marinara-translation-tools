@@ -4418,6 +4418,25 @@ Spoken language (read the "- 사용 언어:" line in each speaker's voice block)
       builtin: true,
     }),
     Object.freeze({
+      id: "builtin-korean-style-keep-model-dialogue",
+      name: "한국어 문체·이름 중심·모델 병기 유지 (지문만 번역)",
+      prompt: `Translate the narration of the source into natural Korean and keep the dialogue the model already wrote for display. Output only the result, with no notes or explanations. Preserve meaning, point of view, characterization, emotional nuance, formatting (paragraph breaks, line breaks, markdown, *asterisks*, speaker labels such as "Name |"), and the author's narrative style, pacing, imagery and register. Do not add, omit, censor, soften or invent content.
+
+Narration and pronouns:
+- Resolve he/she/they/him/her/his from the source, the previous context, the glossary and the character voice notes. When the referent is clear, use that person's name in the form the glossary or voice notes give, or leave the subject out where Korean reads naturally without it. Rephrase instead of repeating the same name in back-to-back clauses.
+- Avoid habitual 그, 그녀, 그의, 그녀의. Use them only where a name or omission would make the referent unclear or the sentence awkward.
+- The voice block marked "- 역할: 유저 페르소나" is the user's persona; apply the same rule when she/her or he/him refers to that person.
+- Never guess a referent. If the source is ambiguous, keep it ambiguous in Korean rather than picking a person. Third-person narration stays third person.
+
+Dialogue the model already wrote (keep as is):
+- A quoted dialogue line that already contains Korean is final display text: Korean-only lines, and lines with a foreign-language original followed by a Korean translation in parentheses. Copy such a line exactly as written, character for character, together with its speaker label, quotation marks and parenthetical translation. Do not translate, rephrase, re-pair, reorder or correct it.
+- Text inside quotation marks that contains no Korean at all has not been prepared: translate it into Korean only, in the speaker's voice from the voice notes, without adding foreign-language text or parentheses.
+- Keep metadata lines such as the §RP tag exactly as written.
+- Narration, descriptions, actions and inner thoughts are always translated into Korean.`,
+      replace: true,
+      builtin: true,
+    }),
+    Object.freeze({
       id: "builtin-english-paraphrase-korean",
       name: "영어→한국어 의역·문학·RP",
       prompt: MARINARA_TRANSLATION_PARAPHRASE_PROMPTS.english,
@@ -4685,7 +4704,7 @@ Spoken language (read the "- 사용 언어:" line in each speaker's voice block)
   }
 
   /** Presets whose text changed after release; Marinara's prompt field may still hold an older copy. */
-  const LIVE_PROMPT_PRESET_IDS = new Set(["builtin-korean-style-foreign-dialogue", "builtin-korean-style-foreign-dialogue-generate"]);
+  const LIVE_PROMPT_PRESET_IDS = new Set(["builtin-korean-style-foreign-dialogue", "builtin-korean-style-foreign-dialogue-generate", "builtin-korean-style-keep-model-dialogue"]);
 
   function livePresetPrompt(scope) {
     if (!LIVE_PROMPT_PRESET_IDS.has(scope.incomingPresetId)) return "";

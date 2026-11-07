@@ -54,7 +54,7 @@ ${scanSrc}
   await page.route("http://marinara.test/**", (r) => r.fulfill({ contentType: "text/html", body: "<html><body></body></html>" }));
   await page.goto("http://marinara.test/");
   const voice = "[Mina]\n- 역할: 유저 페르소나\n- 반말\n\n[Ethan]\n- 사용 언어: 영어 (한국어는 서툶)\n- 반말";
-  const result = await page.evaluate(async ({ code, voice }) => {
+  const translateWith = (page, presetId) => page.evaluate(async ({ code, voice, presetId }) => {
     const sent = [];
     const realFetch = async (input, init) => {
       const url = typeof input === "string" ? input : input.url;
@@ -70,7 +70,7 @@ ${scanSrc}
     localStorage.setItem("marinara-active-chat-id", "c1");
     const config = {
       defaults: {
-        incomingPresetId: "builtin-korean-style-foreign-dialogue-generate",
+        incomingPresetId: presetId,
         incomingVoiceEnabled: true,
         incomingVoicePrompt: voice,
       },
@@ -89,8 +89,15 @@ ${scanSrc}
       body: JSON.stringify({ provider: "ai", text: "\"Hey,\" Ethan said. She smiled.", targetLanguage: "Korean", systemPrompt: "STALE OLD PROMPT", connectionId: "c1" }),
     });
     return sent;
-  }, { code, voice });
+  }, { code, voice, presetId });
+  const result = await translateWith(page, "builtin-korean-style-foreign-dialogue-generate");
+  const keepPage = await browser.newPage();
+  await keepPage.route("http://marinara.test/**", (r) => r.fulfill({ contentType: "text/html", body: "<html><body></body></html>" }));
+  await keepPage.goto("http://marinara.test/");
+  const keepResult = await translateWith(keepPage, "builtin-korean-style-keep-model-dialogue");
   await browser.close();
+  const keepSp = (keepResult[keepResult.length - 1] || {}).systemPrompt || "";
+  check("keep-model-dialogue preset used live, with persona", keepSp.includes("Copy such a line exactly as written") && keepSp.includes("persona is named \"Mina\"") && !keepSp.includes("STALE OLD PROMPT"));
   const req = result[result.length - 1] || {};
   const sp = req.systemPrompt || "";
   check("request intercepted", !!sp);
