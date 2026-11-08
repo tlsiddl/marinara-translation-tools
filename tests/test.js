@@ -141,6 +141,7 @@ ${scanSrc}
   await browser.close();
   const keepSp = (keepResult[keepResult.length - 1] || {}).systemPrompt || "";
   check("keep-model-dialogue preset used live, with persona", keepSp.includes("Copy such a line exactly as written") && keepSp.includes("persona is named \"Mina\"") && !keepSp.includes("STALE OLD PROMPT"));
+  check("narration rule keeps action direction (both presets)", [keepSp, (result[result.length - 1] || {}).systemPrompt || ""].every((s) => s.includes("must not erase where an action is directed")));
   check("keep-model-dialogue preset protects originals and markers", keepSp.includes("Never change a word inside the quoted original") && keepSp.includes("markers such as <x1>…</x1>") && keepSp.includes("Ignore the speaker label"));
   check("기타 지침 sent as style instructions, not reference-only", keepSp.includes("# User Translation Style Instructions\n") && keepSp.includes("STYLE-RULE: never use 계집.") && !keepSp.includes("Reference Only"));
   const req = result[result.length - 1] || {};
