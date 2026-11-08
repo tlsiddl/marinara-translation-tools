@@ -2268,7 +2268,29 @@ function createParagraphTranslator({ marinara, fetch: rawFetch, systemFor, scope
   }
 
   function unitKind(src, lang = currentTarget) {
-    return scriptRatio(stripMarks(src), lang) >= 0.3 ? "same" : "text";
+    const text = stripMarks(src);
+    if (scriptRatio(text, lang) >= 0.3 || isPairedDialogue(text, lang)) return "same";
+    return "text";
+  }
+
+  // Dialogue the chat model already wrote as "original" (한국어 번역), with only speaker labels
+  // around it, is final display text. Sending it to the translator only invites it to rewrite
+  // the original line, so such a unit counts as already in the target language.
+  const PAIRED_QUOTE_RE = /("[^"\n]+"|“[^”\n]+”|«[^»\n]+»)\s*\(([^()\n]+)\)/g;
+
+  function isPairedDialogue(text, lang) {
+    const script = langScript(lang);
+    if (!script || !/korean|한국|조선/i.test(String(lang))) return false;
+    let paired = 0;
+    const rest = String(text)
+      .replace(/<[^<>]*>/g, "")
+      .replace(PAIRED_QUOTE_RE, (m, quote, gloss) => {
+        if (!/[가-힣]/.test(gloss)) return m;
+        paired++;
+        return "";
+      })
+      .replace(/^[ \t]*[^\n|"“«]{1,40}\|/gm, "");
+    return paired > 0 && !/\p{L}/u.test(rest);
   }
 
   // ponytail: messages that are not on screen are split as plain text; markdown/HTML styling
@@ -4517,9 +4539,13 @@ Narration and pronouns:
 - Never guess a referent. If the source is ambiguous, keep it ambiguous in Korean rather than picking a person. Third-person narration stays third person.
 
 Dialogue the model already wrote (keep as is):
-- A quoted dialogue line that already contains Korean is final display text: Korean-only lines, and lines with a foreign-language original followed by a Korean translation in parentheses. Copy such a line exactly as written, character for character, together with its speaker label, quotation marks and parenthetical translation. Do not translate, rephrase, re-pair, reorder or correct it.
-- A quoted line that contains no Korean at all is a foreign-language line (English included) whose translation is missing: keep the original text exactly as written and add a natural Korean translation in that speaker's voice right after it, in parentheses on the same line: "original line" (한국어 번역).
-- Keep markup tags exactly as written, with their attributes and position, around the same text: for example <speaker="Name">Name | "..." (번역)</speaker>. Never drop, move, translate or rename a tag or its attribute value.
+- Decide by the text inside the quotation marks and the parentheses after it. Ignore the speaker label ("Name |") when deciding whether a line already contains Korean.
+- A quoted dialogue line is final display text when the quote is in Korean, or when a Korean translation in parentheses follows it: "foreign line" (한국어 번역). Copy such a line exactly as written, character for character, together with its speaker label, quotation marks and parenthetical translation. Do not translate, rephrase, re-pair, reorder or correct it, even if the Korean translation looks wrong.
+- Never change a word inside the quoted original. Foreign words mixed into the line (tesoro, Principessa, davvero, etc.) stay exactly as they are; do not swap them for English or any other language.
+- If a segment contains nothing but such kept lines, output the segment unchanged.
+- A dialogue line on its own (with a speaker label, or as its own paragraph) whose quote contains no Korean and has no parenthetical translation is a foreign-language line (English included) whose translation is missing: keep the original text exactly as written and add a natural Korean translation right after it, in parentheses on the same line: "original line" (한국어 번역). Write that translation in the speaker's voice, following the voice notes for speech level, sentence endings and address terms.
+- Short quotes inside a narration sentence (for example "Fine," he said.) are part of the narration: translate them into Korean with it, with no dual form.
+- Keep inline markers and tags exactly as they appear, with their attributes and position, around the same text: markers such as <x1>…</x1>, and raw tags such as <speaker="Name">…</speaker> when they appear. Never drop, move, translate, rename or add a marker or tag, and never turn a marker into a different tag.
 - Keep metadata lines such as the §RP tag exactly as written, and keep scene dividers such as *** on their own line with the blank lines around them.
 - Narration, descriptions, actions and inner thoughts are always translated into Korean.`,
       replace: true,
