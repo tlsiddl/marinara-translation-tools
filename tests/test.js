@@ -48,6 +48,32 @@ ${scanSrc}
   check("language line written", out[1].style.includes("- 사용 언어: 영어 (한국어는 서툶)"));
   check("(추정) kept for review", out[2].style.includes("- 사용 언어: 프랑스어 (추정)"));
 
+  // ---- 1b. syncSourceToEdits in isolation ----
+  {
+    const fnSrc = code.slice(code.indexOf("  async function syncSourceToEdits("), code.indexOf("  async function setMessageView("));
+    const calls = { patch: null, saved: null, llmUser: "" };
+    const content = "First paragraph stays.\n\n*It was thirty-one degrees.*\n\n마르첼로 | \"Ciao.\" (안녕.)";
+    const sync = new Function("deps", `
+      const { currentMessage, messageCache, blockKey, stripMarks, llm, api, setCachedContent, getRecord, saveRecord } = deps;
+      const SYNC_SOURCE_SYSTEM = "system";
+      ${fnSrc}
+      return syncSourceToEdits;`)({
+      currentMessage: () => ({ id: "m1", content }),
+      messageCache: new Map(),
+      blockKey: (s) => s.replace(/[*_]/g, "").replace(/\s+/g, " ").trim(),
+      stripMarks: (s) => s,
+      llm: async (system, user) => { calls.llmUser = user; return "*It was thirty-two degrees.*"; },
+      api: async (path, opts) => { calls.patch = { path, body: opts.body }; return {}; },
+      setCachedContent: () => {},
+      getRecord: () => ({ v: 1, map: { "It was thirty-one degrees.": "서른한 도였다." }, edited: {}, view: "", at: 1 }),
+      saveRecord: async (c, m, rec) => { calls.saved = rec; },
+    });
+    const n = await sync("c1", "m1", { "It was thirty-one degrees.": "32도였다." }, { "It was thirty-one degrees.": "서른한 도였다." });
+    check("source sync rewrites only the edited paragraph", n === 1 && calls.patch?.body.content === "First paragraph stays.\n\n*It was thirty-two degrees.*\n\n마르첼로 | \"Ciao.\" (안녕.)");
+    check("source sync sends old and corrected Korean", calls.llmUser.includes("서른한 도였다.") && calls.llmUser.includes("32도였다."));
+    check("translation moved to the new paragraph key", calls.saved?.map["It was thirty-two degrees."] === "32도였다." && !("It was thirty-one degrees." in calls.saved.map) && calls.saved.edited["It was thirty-two degrees."] === 1);
+  }
+
   // ---- 2. full extension in a page ----
   const browser = await chromium.launch();
   const page = await browser.newPage();

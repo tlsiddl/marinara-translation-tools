@@ -2922,6 +2922,83 @@ Reply with the same blocks in the same order, each containing only its translati
     await saveRecord(chatId, messageId, rec, blocks);
   }
 
+  /* ---------- 번역 수정 → 영어 원문 반영 ---------- */
+
+  const SYNC_SOURCE_PREF = "translation-presets-glossary-sync-source";
+  const SYNC_SOURCE_SYSTEM = `You revise one English narration paragraph of a roleplay story so that it matches a Korean translation the user corrected by hand.
+Compare the previous Korean translation with the corrected one. Change the English only where the correction changed meaning, facts, names, numbers, who does what, or tone. Keep every other word, the sentence order, markdown (*, _, **), quotation marks and any tags exactly as in the original English. Write natural English in the same style and voice.
+Output only the revised English paragraph, with no notes, quotation marks around it, or code fences.`;
+
+  function syncSourcePref() {
+    try { return localStorage.getItem(SYNC_SOURCE_PREF) !== "0"; } catch { return true; }
+  }
+
+  function setSyncSourcePref(on) {
+    try { localStorage.setItem(SYNC_SOURCE_PREF, on ? "1" : "0"); } catch { /* per-browser convenience only */ }
+  }
+
+  function setCachedContent(chatId, messageId, content) {
+    const qc = findQueryClient();
+    if (!qc) return;
+    try {
+      qc.setQueryData(messagesKey(chatId), (old) => {
+        if (!old || !Array.isArray(old.pages)) return old;
+        let changed = false;
+        const pages = old.pages.map((page) => (Array.isArray(page) ? page.map((m) => {
+          if (m?.id !== messageId) return m;
+          changed = true;
+          return { ...m, content };
+        }) : page));
+        return changed ? { ...old, pages } : old;
+      });
+    } catch (e) {
+      marinara.log.warn("메시지 캐시를 갱신하지 못했습니다.", e);
+    }
+  }
+
+  /**
+   * Rewrites the English source paragraphs whose Korean translation was corrected by hand,
+   * saves the new message content, and moves each corrected translation to the new paragraph's key.
+   * edits: key → corrected Korean; oldTranslations: key → translation before the correction.
+   * Returns how many paragraphs were rewritten.
+   */
+  async function syncSourceToEdits(chatId, messageId, edits, oldTranslations) {
+    const msg = currentMessage(chatId, messageId) || messageCache.get(messageId);
+    if (!msg || typeof msg.content !== "string") throw new Error("메시지를 찾지 못했습니다.");
+    // Raw paragraphs with their separators, so untouched text and spacing stay byte-for-byte.
+    const parts = msg.content.split(/(\n[ \t]*\n)/);
+    const rewritten = [];
+    for (const [key, corrected] of Object.entries(edits)) {
+      const index = parts.findIndex((part, i) => i % 2 === 0 && part.trim() && blockKey(part) === key);
+      if (index < 0) continue;
+      const original = parts[index];
+      const lead = /^\s*/.exec(original)[0];
+      const trail = /\s*$/.exec(original)[0];
+      const user = `[Original English]\n${original.trim()}\n\n[Previous Korean translation]\n${stripMarks(oldTranslations[key] ?? "") || "(none)"}\n\n[Corrected Korean translation]\n${corrected}`;
+      let revised = (await llm(SYNC_SOURCE_SYSTEM, user, { chatId, prefill: "", temperature: 0.3 })).trim();
+      revised = revised.replace(/^```[a-z]*\n?|\n?```$/g, "").trim();
+      if (!revised || revised === original.trim()) continue;
+      parts[index] = `${lead}${revised}${trail}`;
+      rewritten.push({ oldKey: key, newKey: blockKey(revised), corrected });
+    }
+    if (!rewritten.length) return 0;
+    const content = parts.join("");
+    await api(`/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}`, { method: "PATCH", body: { content } });
+    // Known before the refetch arrives, so rememberMessage does not treat it as a swipe and drop the record.
+    messageCache.set(messageId, { ...msg, content });
+    setCachedContent(chatId, messageId, content);
+    const base = getRecord(messageId) || { v: 1, map: {}, edited: {}, view: "", at: 0 };
+    const rec = { ...base, map: { ...base.map }, edited: { ...base.edited } };
+    for (const { oldKey, newKey, corrected } of rewritten) {
+      delete rec.map[oldKey];
+      delete rec.edited[oldKey];
+      rec.map[newKey] = corrected;
+      rec.edited[newKey] = 1;
+    }
+    await saveRecord(chatId, messageId, rec);
+    return rewritten.length;
+  }
+
   async function setMessageView(chatId, messageId, view) {
     const base = getRecord(messageId);
     if (!base) return;
@@ -3837,7 +3914,7 @@ Base every line on the material. If the material says nothing about the world, r
       title: "대조·수정",
       subtitle: "원문과 번역을 문단별로 비교하고 고칩니다.",
       body: `<div class="ptx-cmp-list">${rows}</div>`,
-      footer: `<button type="button" class="ptx-btn" data-act="all">${ico("refresh-cw", 14)}전체 다시 번역</button><span class="ptx-spacer"></span><button type="button" class="ptx-btn" data-act="cancel">취소</button><button type="button" class="ptx-btn is-primary" data-act="save">${ico("check", 14)}저장</button>`,
+      footer: `<button type="button" class="ptx-btn" data-act="all">${ico("refresh-cw", 14)}전체 다시 번역</button><span class="ptx-spacer"></span><label class="ptx-sync-src" title="직접 고친 번역에 맞춰 영어 원문 문단도 고쳐서 저장합니다."><input type="checkbox" data-sync-src${syncSourcePref() ? " checked" : ""}> 영어 원문도 같이 고치기</label><button type="button" class="ptx-btn" data-act="cancel">취소</button><button type="button" class="ptx-btn is-primary" data-act="save">${ico("check", 14)}저장</button>`,
     });
     m.el.querySelectorAll(".ptx-cmp-src > div").forEach((d, i) => { d.textContent = blocks[i].text; });
     m.el.querySelectorAll(".ptx-cmp-dst textarea").forEach(autoGrow);
@@ -3869,10 +3946,21 @@ Base every line on the material. If the material says nothing about the world, r
       }
       if (act === "save") {
         const { edits, ai } = pending();
+        const syncSource = m.el.querySelector("[data-sync-src]")?.checked === true;
+        setSyncSourcePref(syncSource);
+        const before = { ...(getRecord(id)?.map || {}) };
         try {
           if (Object.keys(edits).length || Object.keys(ai).length) await setManualTranslation(chatId, id, edits, blocks, ai);
-          m.close();
-        } catch (err) { notify(`저장하지 못했습니다: ${err.message}`, "error"); }
+        } catch (err) { notify(`저장하지 못했습니다: ${err.message}`, "error"); return; }
+        if (syncSource && Object.keys(edits).length) {
+          setBusy(true);
+          b.lastChild.textContent = "영어 원문 고치는 중…";
+          try {
+            const count = await syncSourceToEdits(chatId, id, edits, before);
+            notify(count ? `영어 원문 ${count}문단을 고쳤습니다.` : "고칠 영어 문단을 찾지 못했습니다. 번역만 저장했습니다.", count ? "info" : "warn");
+          } catch (err) { notify(`번역은 저장했지만 영어 원문은 고치지 못했습니다: ${err.message}`, "error"); }
+        }
+        m.close();
         return;
       }
       const keys = act === "all" ? blocks.map((x) => x.key) : [b.dataset.k];
@@ -6329,6 +6417,7 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
     .ptx-modal-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 1rem 1.25rem; display: flex; flex-direction: column; gap: .75rem; }
     .ptx-modal-foot { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 7px; padding: .625rem .75rem; border-top: 1px solid var(--marinara-chat-chrome-panel-divider, var(--border)); }
     .ptx-spacer { flex: 1; }
+    .ptx-sync-src { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; opacity: .85; cursor: pointer; white-space: nowrap; }
     .ptx-confirm-text { margin: 0; white-space: pre-wrap; }
     .ptx-hint { margin: 0; color: var(--marinara-chat-chrome-panel-muted, var(--muted-foreground)); font-size: .6875rem; }
     .ptx-empty { padding: .8rem; text-align: center; color: var(--marinara-chat-chrome-panel-muted, var(--muted-foreground)); }
