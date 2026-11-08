@@ -74,6 +74,21 @@ ${scanSrc}
     check("translation moved to the new paragraph key", calls.saved?.map["It was thirty-two degrees."] === "32도였다." && !("It was thirty-one degrees." in calls.saved.map) && calls.saved.edited["It was thirty-two degrees."] === 1);
   }
 
+  // ---- 1c. unitKind: dialogue already paired with a Korean translation is not re-sent ----
+  {
+    const pick = (a, b) => code.slice(code.indexOf(a), code.indexOf(b));
+    const { unitKind } = new Function(`${[
+      pick("  function langScript(", "  function normalizeForKey("),
+      pick("  function stripMarks(", "  /** Rebuilds translated text"),
+      pick("  function unitKind(", "  function fallbackRoot("),
+    ].join("\n")}; return { unitKind };`)();
+    check("paired dialogue with speaker label kept", unitKind('마르첼로 | <x1>"Did you practice that line on the plane, tesoro?"</x1> (비행기에서 연습이라도 했어, 자기?)', "Korean") === "same");
+    check("paired dialogue inside raw speaker tag kept", unitKind('<speaker="로렌조">로렌조 | "Allora cercate meglio, nemmeno a Napoli."</speaker> (그럼 더 똑바로 찾아.)', "Korean") === "same");
+    check("foreign line without translation still sent", unitKind('루카 | "Che ha detto? Inglese?"', "Korean") === "text");
+    check("narration around a paired line still sent", unitKind('He smiled. "Come here." (이리 와.)', "Korean") === "text");
+    check("pairing rule only for Korean targets", unitKind('마르첼로 | "Come here." (이리 와.)', "Japanese") === "text");
+  }
+
   // ---- 2. full extension in a page ----
   const browser = await chromium.launch();
   const page = await browser.newPage();
@@ -126,6 +141,7 @@ ${scanSrc}
   await browser.close();
   const keepSp = (keepResult[keepResult.length - 1] || {}).systemPrompt || "";
   check("keep-model-dialogue preset used live, with persona", keepSp.includes("Copy such a line exactly as written") && keepSp.includes("persona is named \"Mina\"") && !keepSp.includes("STALE OLD PROMPT"));
+  check("keep-model-dialogue preset protects originals and markers", keepSp.includes("Never change a word inside the quoted original") && keepSp.includes("markers such as <x1>…</x1>") && keepSp.includes("Ignore the speaker label"));
   check("기타 지침 sent as style instructions, not reference-only", keepSp.includes("# User Translation Style Instructions\n") && keepSp.includes("STYLE-RULE: never use 계집.") && !keepSp.includes("Reference Only"));
   const req = result[result.length - 1] || {};
   const sp = req.systemPrompt || "";
