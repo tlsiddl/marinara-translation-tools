@@ -71,6 +71,8 @@ ${scanSrc}
     const config = {
       defaults: {
         incomingPresetId: presetId,
+        freeContextEnabled: true,
+        freeContext: "STYLE-RULE: never use 계집.",
         incomingVoiceEnabled: true,
         incomingVoicePrompt: voice,
       },
@@ -98,6 +100,7 @@ ${scanSrc}
   await browser.close();
   const keepSp = (keepResult[keepResult.length - 1] || {}).systemPrompt || "";
   check("keep-model-dialogue preset used live, with persona", keepSp.includes("Copy such a line exactly as written") && keepSp.includes("persona is named \"Mina\"") && !keepSp.includes("STALE OLD PROMPT"));
+  check("기타 지침 sent as style instructions, not reference-only", keepSp.includes("# User Translation Style Instructions\n") && keepSp.includes("STYLE-RULE: never use 계집.") && !keepSp.includes("Reference Only"));
   const req = result[result.length - 1] || {};
   const sp = req.systemPrompt || "";
   check("request intercepted", !!sp);

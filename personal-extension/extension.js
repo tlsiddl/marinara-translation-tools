@@ -4265,7 +4265,7 @@ Base every line on the material. If the material says nothing about the world, r
   const ACTIVE_CHAT_KEY = "marinara-active-chat-id";
   const PANEL_ATTRIBUTE = "data-translation-presets-glossary";
   const SYSTEM_PROMPT_MAX = 5000;
-  const FREE_CONTEXT_MAX = 4000;
+  const FREE_CONTEXT_MAX = 12000;
   const TRANSLATION_TEXT_MAX = 50000;
   const CONTEXT_MESSAGE_COUNT_DEFAULT = 3;
   const CONTEXT_MESSAGE_COUNT_MIN = 1;
@@ -4697,7 +4697,19 @@ Dialogue the model already wrote (keep as is):
   }
 
   /** The 기타 지침 note plus the text of the chosen lorebook entries. */
-  function freeContextSection(raw, lore = "") {
+  /**
+   * With the three live presets, the user's text is a style instruction to follow; otherwise it is reference-only context.
+   * Lorebook text always stays reference-only.
+   */
+  function freeContextSection(raw, lore = "", scope = null) {
+    if (scope && LIVE_PROMPT_PRESET_IDS.has(scope.incomingPresetId) && raw.trim()) {
+      const parts = [`# User Translation Style Instructions
+Follow these instructions for wording, style and rhythm. They never add facts, events or sentences that the source does not have. Passages inside example tags show style only; never copy their names, events or phrases.
+
+${raw.trim()}`];
+      if (lore.trim()) parts.push(MARINARA_TRANSLATION_REFERENCE_RENDERERS.freeContext(escapeContextValue(lore.trim())));
+      return parts.join("\n\n");
+    }
     const context = [raw.trim(), lore.trim()].filter(Boolean).join("\n\n");
     if (!context) return "";
     const escaped = escapeContextValue(context);
@@ -4742,7 +4754,7 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
     const filled = fillPromptMacros(existing || BASE_PROMPT, voice, glossary ? `${GLOSSARY_RULE}\n${glossary}` : "");
     const sections = [filled.text];
     if (glossary && !filled.hasVocab) sections.push(MARINARA_TRANSLATION_REFERENCE_PROMPTS.glossary);
-    const freeContext = scope.freeContextEnabled ? freeContextSection(scope.freeContext, lore) : "";
+    const freeContext = scope.freeContextEnabled ? freeContextSection(scope.freeContext, lore, scope) : "";
     if (freeContext) sections.push(freeContext);
     if (voice && !filled.hasVoice) sections.push(voice);
     if (incoming && persona) sections.push(persona);
@@ -4819,7 +4831,7 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
     return [
       filled.text,
       filled.hasVoice ? "" : voice,
-      scope.freeContextEnabled ? freeContextSection(scope.freeContext, await scopeLore(scope)) : "",
+      scope.freeContextEnabled ? freeContextSection(scope.freeContext, await scopeLore(scope), scope) : "",
       filled.hasVocab ? "" : vocab,
     ].filter(Boolean).join("\n\n");
   }
