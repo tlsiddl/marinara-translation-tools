@@ -52,7 +52,7 @@ ${scanSrc}
   {
     const fnSrc = code.slice(code.indexOf("  async function syncSourceToEdits("), code.indexOf("  async function setMessageView("));
     const calls = { patch: null, saved: null, llmUser: "" };
-    const content = "First paragraph stays.\n\n*It was thirty-one degrees.*\n\n마르첼로 | \"Ciao.\" (안녕.)";
+    const content = "First paragraph stays.\n\n*The lamp was still burning.*\n\n빅터 | \"Salut.\" (안녕.)";
     const sync = new Function("deps", `
       const { currentMessage, messageCache, blockKey, stripMarks, llm, api, setCachedContent, getRecord, saveRecord } = deps;
       const SYNC_SOURCE_SYSTEM = "system";
@@ -62,16 +62,16 @@ ${scanSrc}
       messageCache: new Map(),
       blockKey: (s) => s.replace(/[*_]/g, "").replace(/\s+/g, " ").trim(),
       stripMarks: (s) => s,
-      llm: async (system, user) => { calls.llmUser = user; return "*It was thirty-two degrees.*"; },
+      llm: async (system, user) => { calls.llmUser = user; return "*The lamp had gone out.*"; },
       api: async (path, opts) => { calls.patch = { path, body: opts.body }; return {}; },
       setCachedContent: () => {},
-      getRecord: () => ({ v: 1, map: { "It was thirty-one degrees.": "서른한 도였다." }, edited: {}, view: "", at: 1 }),
+      getRecord: () => ({ v: 1, map: { "The lamp was still burning.": "등불은 아직 타고 있었다." }, edited: {}, view: "", at: 1 }),
       saveRecord: async (c, m, rec) => { calls.saved = rec; },
     });
-    const n = await sync("c1", "m1", { "It was thirty-one degrees.": "32도였다." }, { "It was thirty-one degrees.": "서른한 도였다." });
-    check("source sync rewrites only the edited paragraph", n === 1 && calls.patch?.body.content === "First paragraph stays.\n\n*It was thirty-two degrees.*\n\n마르첼로 | \"Ciao.\" (안녕.)");
-    check("source sync sends old and corrected Korean", calls.llmUser.includes("서른한 도였다.") && calls.llmUser.includes("32도였다."));
-    check("translation moved to the new paragraph key", calls.saved?.map["It was thirty-two degrees."] === "32도였다." && !("It was thirty-one degrees." in calls.saved.map) && calls.saved.edited["It was thirty-two degrees."] === 1);
+    const n = await sync("c1", "m1", { "The lamp was still burning.": "등불은 꺼져 있었다." }, { "The lamp was still burning.": "등불은 아직 타고 있었다." });
+    check("source sync rewrites only the edited paragraph", n === 1 && calls.patch?.body.content === "First paragraph stays.\n\n*The lamp had gone out.*\n\n빅터 | \"Salut.\" (안녕.)");
+    check("source sync sends old and corrected Korean", calls.llmUser.includes("등불은 아직 타고 있었다.") && calls.llmUser.includes("등불은 꺼져 있었다."));
+    check("translation moved to the new paragraph key", calls.saved?.map["The lamp had gone out."] === "등불은 꺼져 있었다." && !("The lamp was still burning." in calls.saved.map) && calls.saved.edited["The lamp had gone out."] === 1);
   }
 
   // ---- 1c. unitKind: dialogue already paired with a Korean translation is not re-sent ----
@@ -82,11 +82,11 @@ ${scanSrc}
       pick("  function stripMarks(", "  /** Rebuilds translated text"),
       pick("  function unitKind(", "  function fallbackRoot("),
     ].join("\n")}; return { unitKind };`)();
-    check("paired dialogue with speaker label kept", unitKind('마르첼로 | <x1>"Did you practice that line on the plane, tesoro?"</x1> (비행기에서 연습이라도 했어, 자기?)', "Korean") === "same");
-    check("paired dialogue inside raw speaker tag kept", unitKind('<speaker="로렌조">로렌조 | "Allora cercate meglio, nemmeno a Napoli."</speaker> (그럼 더 똑바로 찾아.)', "Korean") === "same");
-    check("foreign line without translation still sent", unitKind('루카 | "Che ha detto? Inglese?"', "Korean") === "text");
+    check("paired dialogue with speaker label kept", unitKind('빅터 | <x1>"Did you rehearse that line on the train, chérie?"</x1> (기차에서 연습이라도 했어, 자기?)', "Korean") === "same");
+    check("paired dialogue inside raw speaker tag kept", unitKind('<speaker="세라">세라 | "Alors cherchez mieux, même à Lyon."</speaker> (그럼 더 똑바로 찾아.)', "Korean") === "same");
+    check("foreign line without translation still sent", unitKind('마르코 | "¿Qué ha dicho? ¿Inglés?"', "Korean") === "text");
     check("narration around a paired line still sent", unitKind('He smiled. "Come here." (이리 와.)', "Korean") === "text");
-    check("pairing rule only for Korean targets", unitKind('마르첼로 | "Come here." (이리 와.)', "Japanese") === "text");
+    check("pairing rule only for Korean targets", unitKind('빅터 | "Come here." (이리 와.)', "Japanese") === "text");
   }
 
   // ---- 2. full extension in a page ----
