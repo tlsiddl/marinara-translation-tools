@@ -4481,6 +4481,7 @@ Base every line on the material. If the material says nothing about the world, r
 Narration and pronouns:
 - Resolve he/she/they/him/her/his from the source, the previous context, the glossary and the character voice notes. When the referent is clear, use that person's name in the form the glossary or voice notes give, or leave the subject out where Korean reads naturally without it. Rephrase instead of repeating the same name in back-to-back clauses.
 - Avoid habitual 그, 그녀, 그의, 그녀의. Use them only where a name or omission would make the referent unclear or the sentence awkward.
+- Leaving a word out must not erase where an action is directed. When the source says toward whom or onto whose body something happens (onto him, against his skin, to his mouth), keep that in Korean, once, with the name or a short pointer such as 그 살갗 or 그 입술, so the reader never has to guess who does what to whom.
 - The voice block marked "- 역할: 유저 페르소나" is the user's persona; apply the same rule when she/her or he/him refers to that person.
 - Never guess a referent. If the source is ambiguous, keep it ambiguous in Korean rather than picking a person. Third-person narration stays third person.
 
@@ -4508,6 +4509,7 @@ Spoken language (read the "- 사용 언어:" line in each speaker's voice block)
 Narration and pronouns:
 - Resolve he/she/they/him/her/his from the source, the previous context, the glossary and the character voice notes. When the referent is clear, use that person's name in the form the glossary or voice notes give, or leave the subject out where Korean reads naturally without it. Rephrase instead of repeating the same name in back-to-back clauses.
 - Avoid habitual 그, 그녀, 그의, 그녀의. Use them only where a name or omission would make the referent unclear or the sentence awkward.
+- Leaving a word out must not erase where an action is directed. When the source says toward whom or onto whose body something happens (onto him, against his skin, to his mouth), keep that in Korean, once, with the name or a short pointer such as 그 살갗 or 그 입술, so the reader never has to guess who does what to whom.
 - The voice block marked "- 역할: 유저 페르소나" is the user's persona; apply the same rule when she/her or he/him refers to that person.
 - Never guess a referent. If the source is ambiguous, keep it ambiguous in Korean rather than picking a person. Third-person narration stays third person.
 
@@ -4535,6 +4537,7 @@ Spoken language (read the "- 사용 언어:" line in each speaker's voice block)
 Narration and pronouns:
 - Resolve he/she/they/him/her/his from the source, the previous context, the glossary and the character voice notes. When the referent is clear, use that person's name in the form the glossary or voice notes give, or leave the subject out where Korean reads naturally without it. Rephrase instead of repeating the same name in back-to-back clauses.
 - Avoid habitual 그, 그녀, 그의, 그녀의. Use them only where a name or omission would make the referent unclear or the sentence awkward.
+- Leaving a word out must not erase where an action is directed. When the source says toward whom or onto whose body something happens (onto him, against his skin, to his mouth), keep that in Korean, once, with the name or a short pointer such as 그 살갗 or 그 입술, so the reader never has to guess who does what to whom.
 - The voice block marked "- 역할: 유저 페르소나" is the user's persona; apply the same rule when she/her or he/him refers to that person.
 - Never guess a referent. If the source is ambiguous, keep it ambiguous in Korean rather than picking a person. Third-person narration stays third person.
 
