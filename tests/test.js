@@ -89,6 +89,44 @@ ${scanSrc}
     check("pairing rule only for Korean targets", unitKind('빅터 | "Come here." (이리 와.)', "Japanese") === "text");
   }
 
+  // ---- 1c. catchUpLatest in isolation ----
+  {
+    const fnSrc = code.slice(code.indexOf("  const CATCH_UP_WINDOW_MS"), code.indexOf("  /* ---------- toast"));
+    const make = (messages, { autoTranslate = true, active = false, record = null } = {}) => {
+      const calls = [];
+      const fn = new Function("deps", `
+        const { getChat, handlesRow, api, listMessages, rememberMessage, getRecord, hashText, translateMessage, generationActive, marinara } = deps;
+        const PT_KEY = "paraTranslate"; let disposed = false;
+        ${fnSrc}
+        return catchUpLatest;`)({
+        getChat: async () => ({ mode: "roleplay", metadata: { autoTranslate } }),
+        handlesRow: () => true,
+        api: async () => ({ active }),
+        listMessages: async () => messages,
+        rememberMessage: () => {},
+        getRecord: () => record,
+        hashText: (s) => String(s.length),
+        translateMessage: async (c, id) => { calls.push(id); },
+        generationActive: new Map(),
+        marinara: { log: { warn() {} } },
+      });
+      return { fn, calls };
+    };
+    const recent = new Date(Date.now() - 60_000).toISOString();
+    const old = new Date(Date.now() - 2 * 3600_000).toISOString();
+    const msgs = (at, extra = {}) => [{ id: "u1", role: "user", content: "hi", createdAt: at, extra: {} }, { id: "a1", role: "assistant", content: "English reply.", createdAt: at, extra }];
+    const wait = () => new Promise((r) => setTimeout(r, 1700));
+    const a = make(msgs(recent)); a.fn("c1"); await wait(); a.fn("c1"); await wait();
+    check("catch-up translates a recent untranslated reply once", a.calls.length === 1 && a.calls[0] === "a1");
+    const b = make(msgs(old)); b.fn("c1"); await wait();
+    check("catch-up skips old replies", b.calls.length === 0);
+    const c = make(msgs(recent, { paraTranslate: { map: {} } })); c.fn("c1"); await wait();
+    check("catch-up skips replies that already have a translation", c.calls.length === 0);
+    const d = make(msgs(recent), { autoTranslate: false }); d.fn("c1"); await wait();
+    const e = make(msgs(recent), { active: true }); e.fn("c1"); await wait();
+    check("catch-up skips when auto-translate is off or a generation is running", d.calls.length === 0 && e.calls.length === 0);
+  }
+
   // ---- 2. full extension in a page ----
   const browser = await chromium.launch();
   const page = await browser.newPage();

@@ -3894,6 +3894,40 @@ Base every line on the material. If the material says nothing about the world, r
     }, 500);
   }
 
+  /* [로컬 수정] When this browser loses a generation's stream (screen off, network drop), the
+     reply is saved but translateGenerated never runs. On opening the chat or returning to the
+     page, translate the newest assistant reply if it is recent and has no translation at all. */
+  const CATCH_UP_WINDOW_MS = 30 * 60 * 1000;
+  const caughtUp = new Set();
+  let catchUpTimer = 0;
+
+  function catchUpLatest(chatId) {
+    if (!chatId || disposed) return;
+    clearTimeout(catchUpTimer);
+    catchUpTimer = setTimeout(async () => {
+      if (disposed || generationActive.has(chatId)) return;
+      try {
+        const chat = await getChat(chatId, true);
+        if (!handlesRow(chat) || chat.metadata.autoTranslate !== true) return;
+        const status = await api(`/generate/status/${encodeURIComponent(chatId)}`).catch(() => null);
+        if (status?.active) return;
+        const list = await listMessages(chatId, 4);
+        list.forEach(rememberMessage);
+        const latest = [...list].reverse().find((m) => m.role === "assistant");
+        if (!latest || !latest.content.trim() || latest.extra?.hiddenFromUser === true) return;
+        if (getRecord(latest.id) || latest.extra?.[PT_KEY]) return;
+        const age = Date.now() - Date.parse(latest.createdAt);
+        if (!(age >= 0 && age < CATCH_UP_WINDOW_MS)) return;
+        const attempt = `${latest.id}:${hashText(latest.content)}`;
+        if (caughtUp.has(attempt)) return;
+        caughtUp.add(attempt);
+        await translateMessage(chatId, latest.id, { quiet: true }).catch(() => {});
+      } catch (e) {
+        marinara.log.warn("놓친 자동 번역 보충 실패", e);
+      }
+    }, 1500);
+  }
+
   /* ---------- toast ---------- */
 
   let toastWrap = null;
@@ -4407,6 +4441,7 @@ Base every line on the material. If the material says nothing about the world, r
     handlesRow,
     hookFetch,
     translateGenerated,
+    catchUpLatest,
     reviewScan,
     reviewWorld,
     pickLore,
@@ -6591,7 +6626,12 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
     if (nextChatId === activeChatId) return;
     activeChatId = nextChatId;
     populateAllForms();
+    paragraph.catchUpLatest(activeChatId);
   }
+  // Coming back to the page (phone unlocked, tab refocused) is when a lost generation shows up.
+  const catchUpOnReturn = () => { if (document.visibilityState === "visible") paragraph.catchUpLatest(activeChatId); };
+  document.addEventListener("visibilitychange", catchUpOnReturn);
+  marinara.setTimeout(() => paragraph.catchUpLatest(activeChatId), 3000);
 
   const observer = new MutationObserver(() => {
     if (injectQueued) return;
@@ -6626,6 +6666,7 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
     observer.disconnect();
     window.removeEventListener("popstate", checkActiveChat);
     window.removeEventListener("hashchange", checkActiveChat);
+    document.removeEventListener("visibilitychange", catchUpOnReturn);
     if (history.pushState === wrappedPushState) history.pushState = originalPushState;
     if (history.replaceState === wrappedReplaceState) history.replaceState = originalReplaceState;
     style.remove();
