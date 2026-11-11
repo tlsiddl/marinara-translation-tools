@@ -1115,6 +1115,9 @@ function createMarinaraAutomaticTranslation({
   const pendingTranslations = new Map();
   const gates = new Map();
   const messageOwners = new Map();
+  // chatId -> time of the user's last Stop (POST /api/generate/abort). A stream cut
+  // without that is the Engine's idle watchdog, not the user cancelling.
+  const userAborts = new Map();
   let abort = new AbortController();
   let stopped = false;
   let initialized = false;
@@ -1532,6 +1535,7 @@ function createMarinaraAutomaticTranslation({
               ) {
                 for (const message of run.messages.values()) launch(message, true);
               }
+              if (closed) return; // cancel() already took over this run.
               await (completionTask || complete());
               closed = true;
               controller.close();
@@ -1540,26 +1544,75 @@ function createMarinaraAutomaticTranslation({
             if (emitted) return;
           }
         } catch (error) {
+          if (closed) return;
           closed = true;
-          cancelRun();
-          await finish();
+          await cutOff();
           controller.error(error);
         }
       },
       async cancel(reason) {
         closed = true;
-        cancelRun();
         try {
           await reader.cancel(reason);
-        } finally {
-          await finish();
+        } catch {
+          /* The stream is already gone. */
         }
+        await cutOff();
       },
     });
+    // The stream ended without "done": the user's Stop, a lost connection, or the
+    // Engine's idle watchdog (it drops a stream that went quiet for a minute once the
+    // server reports the generation idle; some setups never send "done"). Only the
+    // last one still gets the usual automatic translation.
+    let cutTask;
+    const cutOff = () =>
+      (cutTask ||= (async () => {
+        let recovered = false;
+        if (!completionSeen && !stopped && !run.cancelled && run.messages.size) {
+          try {
+            // Stop aborts the stream before it posts /generate/abort; let that arrive.
+            await pause(STOP_GRACE_MS);
+            if (!stopped && !run.cancelled && !userStopped(run) && (await generationEnded(run))) {
+              completionSeen = true;
+              if (run.afterProcessing) for (const message of run.messages.values()) launch(message, true);
+              completionTask = complete();
+              await completionTask;
+              recovered = true;
+            }
+          } catch (error) {
+            marinara.log.warn("끊긴 생성의 자동 번역 확인 실패", error);
+          }
+        }
+        if (!recovered) {
+          cancelRun();
+          await finish();
+        }
+      })());
     const headers = new Headers(response.headers);
     headers.delete("Content-Length");
     headers.delete("Content-Encoding");
     return new Response(body, { status: response.status, statusText: response.statusText, headers });
+  };
+  const STOP_GRACE_MS = 1000;
+  const pause = (ms) =>
+    new Promise((resolve) => {
+      const done = () => {
+        marinara.clearTimeout(timer);
+        abort.signal.removeEventListener("abort", done);
+        resolve();
+      };
+      const timer = marinara.setTimeout(done, ms);
+      abort.signal.addEventListener("abort", done, { once: true });
+    });
+  const userStopped = (run) => (userAborts.get(run.lease.chatId) ?? -1) >= run.startedAt;
+  /** After a cut stream: true when the server says this generation is over (not stopped). */
+  const generationEnded = async (run) => {
+    if (run.afterProcessing) return settled(run);
+    const status = await json(
+      `/api/generate/status/${encodeURIComponent(run.lease.chatId)}`,
+      run.lease.headers,
+    );
+    return !status.active && !userStopped(run);
   };
   const settled = async (run) => {
     // Fallback only: hosts without a done event must report an idle generation
@@ -1683,6 +1736,11 @@ function createMarinaraAutomaticTranslation({
         // the attempt, without delaying the generation's done event.
         return replaceJson(response, { ...(await response.json()), translating: true });
       }
+      if (method === "POST" && pathname.endsWith("/api/generate/abort")) {
+        const value = await body();
+        if (value.chatId) userAborts.set(value.chatId, Date.now());
+        return fallback(input, init);
+      }
       if (method === "POST" && /\/api\/generate(?:\/retry-agents)?$/.test(pathname)) {
         const value = await body();
         if (!value.chatId || value.impersonate || pathname.endsWith("/retry-agents"))
@@ -1703,6 +1761,7 @@ function createMarinaraAutomaticTranslation({
         }
         const run = {
           lease,
+          startedAt: Date.now(),
           input: value,
           messages: new Map(),
           paragraphIds: new Set(),
