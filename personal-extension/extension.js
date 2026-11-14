@@ -4477,6 +4477,10 @@ Base every line on the material. If the material says nothing about the world, r
   const CONTEXT_SYSTEM_INSTRUCTIONS = MARINARA_TRANSLATION_REFERENCE_PROMPTS.previousContext;
   const { base: BASE_PROMPT, roleplay: ORIGINAL_ROLEPLAY_PROMPT, literaryRoleplay: LITERARY_ROLEPLAY_PROMPT } =
     MARINARA_TRANSLATION_GENERAL_PROMPTS;
+  /** Added to every built-in preset that writes Korean: models sometimes slip a Chinese word or Japanese kana into the Korean. */
+  const HANGUL_ONLY_RULE =
+    "- Write the Korean in Hangul only. Never leave or insert Chinese characters (Hanzi/Hanja/Kanji) or Japanese kana in the Korean text, not even for a single word; write every word in Hangul. Only text that the rules above tell you to keep exactly as written or to write in another language (a kept original line, a foreign dialogue line in the dual form, a tag, a metadata line such as the §RP tag) keeps its own characters.";
+  const withHangulRule = (prompt) => `${prompt.trimEnd()}\n${HANGUL_ONLY_RULE}`;
   const BUILTIN_PRESETS = Object.freeze([
     Object.freeze({
       id: "builtin-inherit",
@@ -4502,28 +4506,28 @@ Base every line on the material. If the material says nothing about the world, r
     Object.freeze({
       id: "builtin-english-korean",
       name: "영어→한국어 문학·RP",
-      prompt: MARINARA_TRANSLATION_LITERARY_PROMPTS.legacy.english,
+      prompt: withHangulRule(MARINARA_TRANSLATION_LITERARY_PROMPTS.legacy.english),
       replace: true,
       builtin: true,
     }),
     Object.freeze({
       id: "builtin-chinese-korean",
       name: "중국어→한국어 문학·RP",
-      prompt: MARINARA_TRANSLATION_LITERARY_PROMPTS.legacy.chinese,
+      prompt: withHangulRule(MARINARA_TRANSLATION_LITERARY_PROMPTS.legacy.chinese),
       replace: true,
       builtin: true,
     }),
     Object.freeze({
       id: "builtin-japanese-korean",
       name: "일본어→한국어 문학·RP",
-      prompt: MARINARA_TRANSLATION_LITERARY_PROMPTS.legacy.japanese,
+      prompt: withHangulRule(MARINARA_TRANSLATION_LITERARY_PROMPTS.legacy.japanese),
       replace: true,
       builtin: true,
     }),
     Object.freeze({
       id: "builtin-bilingual-dialogue-korean",
       name: "원문 대사 병기·한국어 RP",
-      prompt: MARINARA_TRANSLATION_BILINGUAL_PROMPTS.legacy,
+      prompt: withHangulRule(MARINARA_TRANSLATION_BILINGUAL_PROMPTS.legacy),
       replace: true,
       builtin: true,
     }),
@@ -4534,7 +4538,7 @@ Base every line on the material. If the material says nothing about the world, r
       legacyId: "builtin-english-korean",
       sourceId: "custom-6d2179ba-aa61-443d-b4d0-2871f3b71dd4",
       name: "영어→한국어 문학·RP v2",
-      prompt: MARINARA_TRANSLATION_LITERARY_PROMPTS.v2.english,
+      prompt: withHangulRule(MARINARA_TRANSLATION_LITERARY_PROMPTS.v2.english),
       replace: true,
       builtin: true,
     },
@@ -4543,7 +4547,7 @@ Base every line on the material. If the material says nothing about the world, r
       legacyId: "builtin-japanese-korean",
       sourceId: "custom-50681179-369c-47e6-8aa0-c784d6b4f4c4",
       name: "일본어→한국어 문학·RP v2",
-      prompt: MARINARA_TRANSLATION_LITERARY_PROMPTS.v2.japanese,
+      prompt: withHangulRule(MARINARA_TRANSLATION_LITERARY_PROMPTS.v2.japanese),
       replace: true,
       builtin: true,
     },
@@ -4552,7 +4556,7 @@ Base every line on the material. If the material says nothing about the world, r
       legacyId: "builtin-chinese-korean",
       sourceId: "custom-bb53f4d1-e48e-4458-855b-36aeed276cf7",
       name: "중국어→한국어 문학·RP v2",
-      prompt: MARINARA_TRANSLATION_LITERARY_PROMPTS.v2.chinese,
+      prompt: withHangulRule(MARINARA_TRANSLATION_LITERARY_PROMPTS.v2.chinese),
       replace: true,
       builtin: true,
     },
@@ -4561,7 +4565,7 @@ Base every line on the material. If the material says nothing about the world, r
       legacyId: "builtin-bilingual-dialogue-korean",
       sourceId: "custom-05aa88b0-9167-4567-8eb0-bd55007c1669",
       name: "원문 대사 병기·한국어 RP v2",
-      prompt: MARINARA_TRANSLATION_BILINGUAL_PROMPTS.v2,
+      prompt: withHangulRule(MARINARA_TRANSLATION_BILINGUAL_PROMPTS.v2),
       replace: true,
       builtin: true,
     },
@@ -4570,7 +4574,7 @@ Base every line on the material. If the material says nothing about the world, r
     Object.freeze({
       id: "builtin-korean-style-foreign-dialogue-generate",
       name: "한국어 문체·이름 중심·외국인 대사 병기 (외국어 대사 생성)",
-      prompt: `Translate the source into natural Korean. Output only the translation, with no notes or explanations. Preserve meaning, point of view, characterization, emotional nuance, formatting (paragraph breaks, markdown, *asterisks*), and the author's narrative style, pacing, imagery and register. Do not add, omit, censor, soften or invent content.
+      prompt: withHangulRule(`Translate the source into natural Korean. Output only the translation, with no notes or explanations. Preserve meaning, point of view, characterization, emotional nuance, formatting (paragraph breaks, markdown, *asterisks*), and the author's narrative style, pacing, imagery and register. Do not add, omit, censor, soften or invent content.
 
 Narration and pronouns:
 - Resolve he/she/they/him/her/his from the source, the previous context, the glossary and the character voice notes. When the referent is clear, use that person's name in the form the glossary or voice notes give, or leave the subject out where Korean reads naturally without it. Rephrase instead of repeating the same name in back-to-back clauses.
@@ -4591,14 +4595,14 @@ Spoken language (read the "- 사용 언어:" line in each speaker's voice block)
 - Do not decide anyone's spoken language from their name, appearance or the language the source is written in.
 - When the speaker's 사용 언어 is another language, give the line in that language followed by the Korean translation in the dual form. If the source line is already written in that language, keep it exactly as written. Otherwise write it in that language yourself as a faithful translation of the source line: same meaning, tone and length, nothing added. If you cannot write that language reliably, use Korean only.
 - Dual form: "foreign line" (한국어 번역) — the foreign line inside the source quotation marks, a space, then a natural Korean translation in that speaker's voice in parentheses.
-- This applies only to spoken dialogue in quotation marks. Narration, actions and inner thoughts are always Korean only.`,
+- This applies only to spoken dialogue in quotation marks. Narration, actions and inner thoughts are always Korean only.`),
       replace: true,
       builtin: true,
     }),
     Object.freeze({
       id: "builtin-korean-style-foreign-dialogue",
       name: "한국어 문체·이름 중심·외국인 대사 병기 (원문 있을 때만)",
-      prompt: `Translate the source into natural Korean. Output only the translation, with no notes or explanations. Preserve meaning, point of view, characterization, emotional nuance, formatting (paragraph breaks, markdown, *asterisks*), and the author's narrative style, pacing, imagery and register. Do not add, omit, censor, soften or invent content.
+      prompt: withHangulRule(`Translate the source into natural Korean. Output only the translation, with no notes or explanations. Preserve meaning, point of view, characterization, emotional nuance, formatting (paragraph breaks, markdown, *asterisks*), and the author's narrative style, pacing, imagery and register. Do not add, omit, censor, soften or invent content.
 
 Narration and pronouns:
 - Resolve he/she/they/him/her/his from the source, the previous context, the glossary and the character voice notes. When the referent is clear, use that person's name in the form the glossary or voice notes give, or leave the subject out where Korean reads naturally without it. Rephrase instead of repeating the same name in back-to-back clauses.
@@ -4619,14 +4623,14 @@ Spoken language (read the "- 사용 언어:" line in each speaker's voice block)
 - Do not decide anyone's spoken language from their name, appearance or the language the source is written in.
 - When the speaker's 사용 언어 is another language and the line in the source is actually written in that language, keep the line exactly as written and add the Korean translation in the dual form. When the line is written in any other language, translate it into Korean only. Never write new foreign-language text.
 - Dual form: "foreign line" (한국어 번역) — the foreign line inside the source quotation marks, a space, then a natural Korean translation in that speaker's voice in parentheses.
-- This applies only to spoken dialogue in quotation marks. Narration, actions and inner thoughts are always Korean only.`,
+- This applies only to spoken dialogue in quotation marks. Narration, actions and inner thoughts are always Korean only.`),
       replace: true,
       builtin: true,
     }),
     Object.freeze({
       id: "builtin-korean-style-keep-model-dialogue",
       name: "한국어 문체·이름 중심·모델 병기 유지 (지문만 번역)",
-      prompt: `Translate the narration of the source into natural Korean and keep the dialogue the model already wrote for display. Output only the result, with no notes or explanations. Preserve meaning, point of view, characterization, emotional nuance, formatting (paragraph breaks, line breaks, markdown, *asterisks*, speaker labels such as "Name |"), and the author's narrative style, pacing, imagery and register. Do not add, omit, censor, soften or invent content.
+      prompt: withHangulRule(`Translate the narration of the source into natural Korean and keep the dialogue the model already wrote for display. Output only the result, with no notes or explanations. Preserve meaning, point of view, characterization, emotional nuance, formatting (paragraph breaks, line breaks, markdown, *asterisks*, speaker labels such as "Name |"), and the author's narrative style, pacing, imagery and register. Do not add, omit, censor, soften or invent content.
 
 Narration and pronouns:
 - Resolve he/she/they/him/her/his from the source, the previous context, the glossary and the character voice notes. When the referent is clear, use that person's name in the form the glossary or voice notes give, or leave the subject out where Korean reads naturally without it. Rephrase instead of repeating the same name in back-to-back clauses.
@@ -4644,28 +4648,28 @@ Dialogue the model already wrote (keep as is):
 - Short quotes inside a narration sentence (for example "Fine," he said.) are part of the narration: translate them into Korean with it, with no dual form.
 - Keep inline markers and tags exactly as they appear, with their attributes and position, around the same text: markers such as <x1>…</x1>, and raw tags such as <speaker="Name">…</speaker> when they appear. Never drop, move, translate, rename or add a marker or tag, and never turn a marker into a different tag.
 - Keep metadata lines such as the §RP tag exactly as written, and keep scene dividers such as *** on their own line with the blank lines around them.
-- Narration, descriptions, actions and inner thoughts are always translated into Korean.`,
+- Narration, descriptions, actions and inner thoughts are always translated into Korean.`),
       replace: true,
       builtin: true,
     }),
     Object.freeze({
       id: "builtin-english-paraphrase-korean",
       name: "영어→한국어 의역·문학·RP",
-      prompt: MARINARA_TRANSLATION_PARAPHRASE_PROMPTS.english,
+      prompt: withHangulRule(MARINARA_TRANSLATION_PARAPHRASE_PROMPTS.english),
       replace: true,
       builtin: true,
     }),
     Object.freeze({
       id: "builtin-english-source-style-korean",
       name: "영어→영문학 번역체·RP",
-      prompt: MARINARA_TRANSLATION_SOURCE_STYLE_PROMPTS.english,
+      prompt: withHangulRule(MARINARA_TRANSLATION_SOURCE_STYLE_PROMPTS.english),
       replace: true,
       builtin: true,
     }),
     Object.freeze({
       id: "builtin-chinese-paraphrase-korean",
       name: "중국어→한국어 의역·문학·RP",
-      prompt: MARINARA_TRANSLATION_PARAPHRASE_PROMPTS.chinese,
+      prompt: withHangulRule(MARINARA_TRANSLATION_PARAPHRASE_PROMPTS.chinese),
       replace: true,
       builtin: true,
     }),
@@ -4772,6 +4776,35 @@ Dialogue the model already wrote (keep as is):
     }
   }
 
+  const NOTE_NAME_MAX = 60;
+  const NOTES_MAX = 100;
+  /** Saved 기타 지침 shared by every chat: [{ id, name, text }]. Loading one copies its text into a chat's 기타 지침. */
+  function normalizeNotes(value) {
+    const notes = [];
+    const ids = new Set();
+    const names = new Set();
+    for (const item of Array.isArray(value) ? value : []) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+      const id = typeof item.id === "string" ? item.id.trim() : "";
+      const name = typeof item.name === "string" ? item.name.trim().slice(0, NOTE_NAME_MAX) : "";
+      const text = typeof item.text === "string" ? item.text.trim().slice(0, FREE_CONTEXT_MAX) : "";
+      if (!id.startsWith("note-") || ids.has(id) || !name || names.has(name) || !text) continue;
+      ids.add(id);
+      names.add(name);
+      notes.push({ id, name, text });
+      if (notes.length >= NOTES_MAX) break;
+    }
+    return notes;
+  }
+
+  function newNoteId() {
+    try {
+      return `note-${crypto.randomUUID()}`;
+    } catch {
+      return `note-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    }
+  }
+
   function newPresetId() {
     try {
       return `custom-${crypto.randomUUID()}`;
@@ -4800,7 +4833,7 @@ Dialogue the model already wrote (keep as is):
       const name = typeof item.name === "string" ? item.name.trim() : "";
       const prompt = typeof item.prompt === "string" ? item.prompt : "";
       if (!id || ids.has(id) || reservedIds.has(id) || !name || !prompt.trim()) continue;
-      if (upgraded && V2_PRESETS.some((p) => p.sourceId === id && p.name === name && p.prompt === prompt)) continue;
+      if (upgraded && V2_PRESETS.some((p) => p.sourceId === id && p.name === name && (p.prompt === prompt || p.prompt === withHangulRule(prompt)))) continue;
       ids.add(id);
       presets.push({ id, name, prompt, replace: true, builtin: false });
     }
@@ -4872,6 +4905,7 @@ Dialogue the model already wrote (keep as is):
       defaults: normalizeScope(source.defaults),
       chats,
       paragraph: normalizeParagraph(source.paragraph),
+      notes: normalizeNotes(source.notes),
     };
   }
 
@@ -5306,7 +5340,7 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
     const remap = new Map();
     for (const preset of V2_PRESETS) {
       const custom = next.presets.find((p) => p.id === preset.sourceId);
-      if (custom?.name === preset.name && custom.prompt === preset.prompt) remap.set(custom.id, preset.id);
+      if (custom?.name === preset.name && (custom.prompt === preset.prompt || withHangulRule(custom.prompt) === preset.prompt)) remap.set(custom.id, preset.id);
       if (!keepLegacy) remap.set(preset.legacyId, preset.id);
     }
     for (const scope of [next.defaults, ...Object.values(next.chats)]) {
@@ -5554,6 +5588,7 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
     form.elements.namedItem("freeContext").value = scope.freeContext;
     form.elements.namedItem("loreEntries").value = JSON.stringify(scope.loreEntries);
     syncLoreCount(form);
+    syncNoteSelect(form);
     form.elements.namedItem("incomingVoiceEnabled").checked = scope.incomingVoiceEnabled;
     form.elements.namedItem("incomingVoicePrompt").value = scope.incomingVoicePrompt;
     form.elements.namedItem("contextEnabled").checked = scope.contextEnabled;
@@ -5883,6 +5918,84 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
     }
   }
 
+  /** Fill the saved-notes list; keep the chosen one when it still exists. */
+  function syncNoteSelect(form, chosenId) {
+    const select = form.elements.namedItem("freeContextNote");
+    if (!select) return;
+    const notes = storedConfig?.notes || [];
+    const keep = chosenId ?? select.value;
+    const first = document.createElement("option");
+    first.value = "";
+    first.textContent = notes.length ? "저장한 지침 고르기" : "저장한 지침 없음";
+    select.replaceChildren(first, ...notes.map((note) => {
+      const option = document.createElement("option");
+      option.value = note.id;
+      option.textContent = note.name;
+      return option;
+    }));
+    select.value = notes.some((note) => note.id === keep) ? keep : "";
+    syncNoteButtons(form);
+  }
+
+  function syncNoteButtons(form) {
+    const picked = !!form.elements.namedItem("freeContextNote")?.value;
+    form.querySelector("[data-tpg-note-load]").disabled = !picked;
+    form.querySelector("[data-tpg-note-delete]").disabled = !picked;
+  }
+
+  const pickedNote = (form) => (storedConfig?.notes || []).find((note) => note.id === form.elements.namedItem("freeContextNote").value);
+
+  /** Only the notes list is written; the rest of the open form stays as the user left it. */
+  async function writeNotes(build) {
+    await queueConfigWrite((current) => ({ ...current, notes: build(current.notes || []) }), false);
+    for (const each of forms) if (each.isConnected) syncNoteSelect(each);
+  }
+
+  async function saveNote(form) {
+    const text = form.elements.namedItem("freeContext").value.trim();
+    if (!text) {
+      setStatus(form, "저장할 기타 지침이 없습니다.", "error");
+      return;
+    }
+    const picked = pickedNote(form);
+    const name = (window.prompt("저장할 이름", picked?.name || "") || "").trim().slice(0, NOTE_NAME_MAX);
+    if (!name) return;
+    const same = (storedConfig?.notes || []).find((note) => note.name === name);
+    if (same && same.text !== text && !window.confirm(`"${name}" 지침을 지금 글로 바꿀까요?`)) return;
+    const id = same?.id || newNoteId();
+    try {
+      await writeNotes((notes) => (same ? notes.map((note) => (note.id === id ? { id, name, text } : note)) : [...notes, { id, name, text }]));
+      syncNoteSelect(form, id);
+      setStatus(form, `"${name}" 지침을 저장했습니다. 다른 채팅에서 불러올 수 있습니다.`, "success");
+    } catch (error) {
+      setStatus(form, error instanceof Error ? error.message : "저장하지 못했습니다.", "error");
+    }
+  }
+
+  async function loadNote(form) {
+    const note = pickedNote(form);
+    if (!note) return;
+    const field = form.elements.namedItem("freeContext");
+    const now = field.value.trim();
+    if (now && now !== note.text && !window.confirm(`이 채팅의 기타 지침을 "${note.name}" 지침으로 바꿀까요?`)) return;
+    field.value = note.text;
+    form.elements.namedItem("freeContextEnabled").checked = true;
+    syncFreeContextVisibility(form);
+    paintSwitches(form);
+    form.requestSubmit();
+  }
+
+  async function deleteNote(form) {
+    const note = pickedNote(form);
+    if (!note || !window.confirm(`"${note.name}" 지침을 지울까요? 이미 불러온 채팅의 기타 지침은 그대로입니다.`)) return;
+    try {
+      await writeNotes((notes) => notes.filter((each) => each.id !== note.id));
+      setStatus(form, `"${note.name}" 지침을 지웠습니다.`, "success");
+    } catch (error) {
+      setStatus(form, error instanceof Error ? error.message : "지우지 못했습니다.", "error");
+    }
+  }
+
   async function runWorldScan(form, button) {
     const chatId = activeChatId;
     if (!chatId) {
@@ -5930,6 +6043,7 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
       downloadJson(`번역설정-전체-${stamp}.json`, {
         kind: BACKUP_KIND, v: 1, type: "all", exportedAt,
         presets: customPresets(), defaults: storedConfig.defaults, chats: storedConfig.chats, paragraph: storedConfig.paragraph,
+        notes: storedConfig.notes,
       });
       setStatus(form, "전체 설정을 내보냈습니다.", "success");
       return;
@@ -6019,6 +6133,13 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
     });
   }
 
+  /** File notes win for the same id or name; the rest stay. */
+  function mergeNotes(current, incoming) {
+    const add = normalizeNotes(incoming);
+    const kept = (current || []).filter((note) => !add.some((n) => n.id === note.id || n.name === note.name));
+    return normalizeNotes([...kept, ...add]);
+  }
+
   async function importBackup(form) {
     try {
       const text = await pickTextFile();
@@ -6042,6 +6163,7 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
             defaults: data.defaults ? normalizeScope(data.defaults) : next.defaults,
             chats,
             paragraph: data.paragraph ? normalizeParagraph(data.paragraph) : next.paragraph,
+            notes: mergeNotes(next.notes, data.notes),
           };
         }, true);
         paragraph.refresh();
@@ -6169,6 +6291,13 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
             <button type="button" class="${UI.button}" data-tpg-world>세계관 자동 정리</button>
           </div>
           <label class="block ${UI.help}" data-tpg-lore-count hidden></label>
+          <select name="freeContextNote" class="${UI.select}" aria-label="저장한 기타 지침"></select>
+          <div class="tpg-inline-actions">
+            <button type="button" class="${UI.button}" data-tpg-note-load>불러오기</button>
+            <button type="button" class="${UI.button}" data-tpg-note-save>지금 지침 저장</button>
+            <button type="button" class="${UI.button}" data-tpg-note-delete>지우기</button>
+          </div>
+          <p class="${UI.help}">저장한 지침은 모든 채팅에서 불러올 수 있습니다. 불러오면 이 채팅의 기타 지침이 그 글로 바뀌고 바로 저장됩니다. 저장한 지침을 나중에 고쳐도 이미 불러온 채팅은 그대로입니다.</p>
         </div>
       </section>
       <section class="tpg-group">
@@ -6357,6 +6486,10 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
     }
     form.querySelector("[data-tpg-lore]").addEventListener("click", (event) => void runLorePick(form, event.currentTarget));
     form.querySelector("[data-tpg-world]").addEventListener("click", (event) => void runWorldScan(form, event.currentTarget));
+    form.querySelector("[data-tpg-note-load]").addEventListener("click", () => void loadNote(form));
+    form.querySelector("[data-tpg-note-save]").addEventListener("click", () => void saveNote(form));
+    form.querySelector("[data-tpg-note-delete]").addEventListener("click", () => void deleteNote(form));
+    form.elements.namedItem("freeContextNote").addEventListener("change", () => syncNoteButtons(form));
     // [로컬 수정 1.6.1] bulk translation of the open chat
     form.querySelector("[data-tpg-bulk]")?.addEventListener("click", () => void paragraph.translateAllMissing(activeChatId));
     for (const button of form.querySelectorAll("[data-tpg-export]")) {
