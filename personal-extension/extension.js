@@ -1109,6 +1109,7 @@ function createMarinaraAutomaticTranslation({
   translate,
   gameSource,
   paragraph,
+  onGenerated,
 }) {
   const leases = new Map();
   const attempts = new Map();
@@ -1464,6 +1465,9 @@ function createMarinaraAutomaticTranslation({
         await finish();
         if (run.paragraphIds.size && !stopped && !run.cancelled) {
           paragraph.translateGenerated(run.lease.chatId, [...run.paragraphIds]);
+        }
+        if (!stopped && !run.cancelled) {
+          try { onGenerated?.(run.lease.chatId); } catch (error) { marinara.log.warn("생성 후 처리 실패", error); }
         }
       }
     };
@@ -1863,7 +1867,7 @@ function createMarinaraAutomaticTranslation({
 // compare/edit, retranslate, clear, and auto-collect of glossary and character voices.
 // Used only when the chat translates with an AI connection outside Game mode;
 // every other case keeps Marinara's own translation.
-function createParagraphTranslator({ marinara, fetch: rawFetch, systemFor, scopeFor, settings }) {
+function createParagraphTranslator({ marinara, fetch: rawFetch, systemFor, scopeFor, settings, collectApply }) {
   const PT_KEY = "paraTranslate";
   const ACTIVE_CHAT_STORAGE_KEY = "marinara-active-chat-id";
   const MAX_TOKENS = 8192;
@@ -3928,6 +3932,46 @@ Base every line on the material. If the material says nothing about the world, r
     }, 1500);
   }
 
+  /* ---------- NPC auto collect ---------- */
+
+  /* Every Nth finished generation of a chat with 자동 수집 on, re-run the 말투 자동 정리 and 단어장 생성 scans
+     without a dialog and add only the people and terms the chat does not have yet (collectApply decides).
+     The counter lives in memory, so a page reload starts counting again. */
+  const autoCollectCounts = new Map();
+  const autoCollectBusy = new Set();
+
+  function autoCollectTick(chatId) {
+    if (disposed || !chatId) return;
+    const scope = scopeFor(chatId);
+    if (!scope.autoCollectEnabled || typeof collectApply !== "function") return;
+    const count = (autoCollectCounts.get(chatId) || 0) + 1;
+    if (count < scope.autoCollectEvery) {
+      autoCollectCounts.set(chatId, count);
+      return;
+    }
+    autoCollectCounts.set(chatId, 0);
+    if (autoCollectBusy.has(chatId)) return;
+    autoCollectBusy.add(chatId);
+    // Gives the new reply a moment to be saved before the scan reads the recent messages.
+    setTimeout(async () => {
+      try {
+        if (disposed) return;
+        const speech = await scanChat(chatId, "speech");
+        const glossary = await scanChat(chatId, "glossary");
+        if (disposed) return;
+        const added = await collectApply(chatId, { speech, glossary });
+        if (added.voice || added.glossary) {
+          const parts = [added.voice && `인물 ${added.voice}명`, added.glossary && `단어 ${added.glossary}개`].filter(Boolean);
+          notify(`NPC 자동 수집: ${parts.join(", ")}을(를) 추가했습니다.`);
+        }
+      } catch (e) {
+        marinara.log.warn("NPC 자동 수집 실패", e);
+      } finally {
+        autoCollectBusy.delete(chatId);
+      }
+    }, 3000);
+  }
+
   /* ---------- toast ---------- */
 
   let toastWrap = null;
@@ -4441,6 +4485,7 @@ Base every line on the material. If the material says nothing about the world, r
     handlesRow,
     hookFetch,
     translateGenerated,
+    autoCollectTick,
     catchUpLatest,
     reviewScan,
     reviewWorld,
@@ -4710,6 +4755,9 @@ Dialogue the model already wrote (keep as is):
   ].map((id, index) => [id, index]));
   const LEGACY_VOICE_INSTRUCTION_START = "[Translation Tools: Character Voice Instructions]";
   const LEGACY_VOICE_INSTRUCTION_END = "[/Translation Tools: Character Voice Instructions]";
+  const AUTO_COLLECT_EVERY_DEFAULT = 5;
+  const AUTO_COLLECT_EVERY_MIN = 1;
+  const AUTO_COLLECT_EVERY_MAX = 50;
   const DEFAULT_SCOPE = Object.freeze({
     glossary: "",
     freeContextEnabled: false,
@@ -4723,6 +4771,8 @@ Dialogue the model already wrote (keep as is):
     contextIncludeUserInput: false,
     contextMessageCount: CONTEXT_MESSAGE_COUNT_DEFAULT,
     translateAfterPostProcessing: false,
+    autoCollectEnabled: false,
+    autoCollectEvery: AUTO_COLLECT_EVERY_DEFAULT,
     outgoingPresetId: "builtin-inherit",
     incomingPresetId: "builtin-inherit",
     outgoingOriginalPrompt: "",
@@ -4856,6 +4906,10 @@ Dialogue the model already wrote (keep as is):
     const contextMessageCount = Number.isFinite(rawContextMessageCount)
       ? Math.min(CONTEXT_MESSAGE_COUNT_MAX, Math.max(CONTEXT_MESSAGE_COUNT_MIN, rawContextMessageCount))
       : CONTEXT_MESSAGE_COUNT_DEFAULT;
+    const rawAutoCollectEvery = Number.parseInt(String(source.autoCollectEvery ?? ""), 10);
+    const autoCollectEvery = Number.isFinite(rawAutoCollectEvery)
+      ? Math.min(AUTO_COLLECT_EVERY_MAX, Math.max(AUTO_COLLECT_EVERY_MIN, rawAutoCollectEvery))
+      : AUTO_COLLECT_EVERY_DEFAULT;
     return {
       glossary: typeof source.glossary === "string" ? source.glossary : "",
       freeContextEnabled: source.freeContextEnabled === true,
@@ -4869,6 +4923,8 @@ Dialogue the model already wrote (keep as is):
       contextIncludeUserInput: source.contextIncludeUserInput === true,
       contextMessageCount,
       translateAfterPostProcessing: source.translateAfterPostProcessing === true,
+      autoCollectEnabled: source.autoCollectEnabled === true,
+      autoCollectEvery,
       outgoingPresetId: typeof source.outgoingPresetId === "string" ? source.outgoingPresetId : "builtin-inherit",
       incomingPresetId: typeof source.incomingPresetId === "string" ? source.incomingPresetId : "builtin-inherit",
       outgoingOriginalPrompt:
@@ -5597,6 +5653,8 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
     form.elements.namedItem("contextIncludeUserInput").checked = scope.contextIncludeUserInput;
     form.elements.namedItem("contextMessageCount").value = String(scope.contextMessageCount);
     form.elements.namedItem("translateAfterPostProcessing").checked = scope.translateAfterPostProcessing;
+    form.elements.namedItem("autoCollectEnabled").checked = scope.autoCollectEnabled;
+    form.elements.namedItem("autoCollectEvery").value = String(scope.autoCollectEvery);
     const paragraphSettings = storedConfig.paragraph ?? DEFAULT_PARAGRAPH;
     form.elements.namedItem("paraViewMode").value = paragraphSettings.viewMode;
     form.elements.namedItem("paraKeepTags").value = paragraphSettings.keepTags;
@@ -5723,6 +5781,51 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
       else parsed.blocks.push({ name: entry.name, style: entry.style });
     }
     return [parsed.head, ...parsed.blocks.map((block) => `[${block.name}]\n${block.style}`)].filter(Boolean).join("\n\n");
+  }
+
+  /** Of the scan results, only what the chat does not have yet (compared by name or term, ignoring case).
+      found: { speech: [{ name, style }], glossary: [{ src, dst }] } */
+  function selectNewCollected(scope, found) {
+    const key = (text) => String(text ?? "").trim().toLowerCase();
+    const haveNames = new Set(parseVoice(scope.incomingVoicePrompt).blocks.map((block) => key(block.name)));
+    const haveTerms = new Set(parseGlossary(scope.glossary).flatMap((pair) => [key(pair.left), key(pair.right)]));
+    const voice = [];
+    for (const entry of Array.isArray(found?.speech) ? found.speech : []) {
+      const name = String(entry?.name ?? "").trim();
+      const style = String(entry?.style ?? "").trim();
+      if (!name || !style || haveNames.has(key(name))) continue;
+      haveNames.add(key(name));
+      voice.push({ name, style });
+    }
+    const glossary = [];
+    for (const entry of Array.isArray(found?.glossary) ? found.glossary : []) {
+      const left = String(entry?.src ?? "").trim();
+      const right = String(entry?.dst ?? "").trim();
+      if (!left || !right || haveTerms.has(key(left)) || haveTerms.has(key(right))) continue;
+      haveTerms.add(key(left));
+      haveTerms.add(key(right));
+      glossary.push({ left, right });
+    }
+    return { voice, glossary };
+  }
+
+  /** Saves the new items into the chat's settings and returns how many were added. */
+  async function applyAutoCollected(chatId, found) {
+    let added = { voice: 0, glossary: 0 };
+    await queueConfigWrite((current) => {
+      const scope = currentScope(current, chatId);
+      const fresh = selectNewCollected(scope, found);
+      added = { voice: fresh.voice.length, glossary: fresh.glossary.length };
+      if (!added.voice && !added.glossary) return current;
+      const next = { ...scope };
+      if (added.glossary) next.glossary = mergeGlossary(scope.glossary, fresh.glossary);
+      if (added.voice) {
+        next.incomingVoicePrompt = mergeVoice(scope.incomingVoicePrompt, fresh.voice);
+        next.incomingVoiceEnabled = true;
+      }
+      return { ...current, chats: { ...current.chats, [chatId]: next } };
+    }, true);
+    return added;
   }
 
   /* ---------- item editors for the glossary and voice notes ---------- */
@@ -6323,6 +6426,13 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
         ${switchRow("translateAfterPostProcessing", "후처리 후 번역", "응답 자동 번역 때 후처리가 끝난 최종 응답을 번역합니다.")}
       </section>
       <section class="tpg-group">
+        <h5 class="${UI.title}">NPC 자동 수집</h5>
+        ${switchRow("autoCollectEnabled", "새 인물·단어 자동 수집", "응답 자동 번역이 켜진 채팅에서, 정한 횟수만큼 응답이 끝날 때마다 말투 자동 정리와 단어장 생성을 조용히 실행해 새 인물과 새 단어만 추가합니다. 이미 있는 항목은 바꾸지 않습니다. 실행할 때마다 AI 요청이 두 번 나갑니다.")}
+        <div class="tpg-context-count"><label class="${UI.label}">몇 번째 응답마다</label>
+          <input type="number" name="autoCollectEvery" class="${UI.input}" min="1" max="50" step="1" inputmode="numeric"></div>
+        <label class="block ${UI.help}">페이지를 새로 열면 횟수를 처음부터 다시 셉니다. 새 인물이 추가되면 대사 지침도 함께 켭니다.</label>
+      </section>
+      <section class="tpg-group">
         <h5 class="${UI.title}">문단 번역</h5>
         <label class="block ${UI.help}">AI 번역(게임 모드 제외)은 문단별로 번역합니다. 번역된 문단을 누르면 원문이 펼쳐집니다. 모든 채팅에 적용됩니다.</label>
         <div><label class="${UI.label}">표시 방식</label>
@@ -6533,6 +6643,8 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
         contextIncludeUserInput: form.elements.namedItem("contextIncludeUserInput").checked,
         contextMessageCount: form.elements.namedItem("contextMessageCount").value,
         translateAfterPostProcessing: form.elements.namedItem("translateAfterPostProcessing").checked,
+        autoCollectEnabled: form.elements.namedItem("autoCollectEnabled").checked,
+        autoCollectEvery: form.elements.namedItem("autoCollectEvery").value,
         outgoingPresetId: form.elements.namedItem("outgoingPresetId").value,
         incomingPresetId: form.elements.namedItem("incomingPresetId").value,
         outgoingOriginalPrompt: form._originalPrompts.outgoing,
@@ -6737,6 +6849,7 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
     systemFor: paragraphSystem,
     scopeFor: (chatId) => currentScope(storedConfig, chatId),
     settings: () => storedConfig?.paragraph ?? DEFAULT_PARAGRAPH,
+    collectApply: applyAutoCollected,
   });
   const automaticTranslation = createMarinaraAutomaticTranslation({
     marinara,
@@ -6746,6 +6859,7 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
     gameSource: (message) => MARINARA_GAME_TRANSLATION.buildGameTranslationSource(message),
     translate: translateAutomaticRequest,
     paragraph,
+    onGenerated: (chatId) => paragraph.autoCollectTick(chatId),
   });
   let runtimeActive = true;
   const managedFetch = (input, init) => runtimeActive
