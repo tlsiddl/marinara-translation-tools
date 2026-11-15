@@ -2336,6 +2336,51 @@ function createParagraphTranslator({ marinara, fetch: rawFetch, systemFor, scope
     return "text";
   }
 
+  /* English speaker names. Two places show a character's name outside the story text: the label of a
+     dialogue line (Name | "line") and the status lines under a §RP line (Name: outfit | posture | mood).
+     Those paragraphs look Korean already, so they are not sent to the translator; the names in them are
+     swapped here from the chat's glossary instead. A paragraph with a name the glossary lacks goes to the
+     translator with the rest (its prompt translates such names). */
+  const LATIN_NAME_RE = /[A-Za-z]/;
+  const HANGUL_RE = /[가-힣]/;
+  const DIALOGUE_LABEL_RE = /^(\s*)([^|"“«<>⟪⟫\n]{1,40}?)(\s*\|\s*)(?=["“«])/;
+  const STATUS_LINE_RE = /^(\s*)([^:|<>⟪⟫\n]{1,40}?)(\s*:\s)/;
+
+  function labelLookup(glossary) {
+    const map = new Map();
+    for (const line of String(glossary || "").split(/\r?\n/u)) {
+      const at = line.indexOf("=");
+      if (at < 1) continue;
+      const left = line.slice(0, at).trim();
+      const right = line.slice(at + 1).trim();
+      if (!left || !right) continue;
+      const latin = (text) => LATIN_NAME_RE.test(text) && !HANGUL_RE.test(text);
+      if (latin(left)) map.set(left.toLowerCase(), right);
+      else if (latin(right)) map.set(right.toLowerCase(), left);
+    }
+    return map;
+  }
+
+  /** found: English names seen; missing: those the glossary has no form for; text: src with the known ones swapped. */
+  function relabelNames(src, lookup) {
+    const missing = [];
+    let found = 0;
+    let inStatus = false;
+    const text = String(src).split("\n").map((line) => {
+      if (/^\s*§RP\b/.test(line)) { inStatus = true; return line; }
+      if (!line.trim()) { inStatus = false; return line; }
+      const m = DIALOGUE_LABEL_RE.exec(line) || (inStatus ? STATUS_LINE_RE.exec(line) : null);
+      if (!m) return line;
+      const name = m[2].trim();
+      if (!LATIN_NAME_RE.test(name) || HANGUL_RE.test(name)) return line;
+      found++;
+      const hit = lookup.get(name.toLowerCase());
+      if (hit === undefined) { missing.push(name); return line; }
+      return `${m[1]}${hit}${m[3]}${line.slice(m[0].length)}`;
+    }).join("\n");
+    return { found, missing, text };
+  }
+
   // Dialogue the chat model already wrote as "original" (한국어 번역), with only speaker labels
   // around it, is final display text. Sending it to the translator only invites it to rewrite
   // the original line, so such a unit counts as already in the target language.
@@ -2945,8 +2990,18 @@ Reply with the same blocks in the same order, each containing only its translati
       const lang = targetLang(chatId);
       const blocks = messageUnits(messageId, msg.content, lang);
       const rec = getRecord(messageId) || { v: 1, map: {}, edited: {}, view: "", at: 0 };
-      const todo = blocks.filter((b) => b.kind === "text" && (keys ? keys.includes(b.key) : (force || rec.map[b.key] === undefined)));
-      if (!todo.length) {
+      const wanted = (b) => (keys ? keys.includes(b.key) : (force || rec.map[b.key] === undefined));
+      const lookup = labelLookup(scopeFor(chatId).glossary);
+      const local = new Map();
+      const extra = [];
+      for (const b of blocks) {
+        if (b.kind !== "same" || !wanted(b)) continue;
+        const r = relabelNames(b.src, lookup);
+        if (r.missing.length) extra.push(b);
+        else if (r.found) local.set(b.key, r.text);
+      }
+      const todo = [...blocks.filter((b) => b.kind === "text" && wanted(b)), ...extra];
+      if (!todo.length && !local.size) {
         if (!getRecord(messageId) && !quiet) notify("이 메시지에는 번역할 문단이 없습니다.", "info");
         return { done: 0, failed: 0 };
       }
@@ -2955,23 +3010,24 @@ Reply with the same blocks in the same order, each containing only its translati
       const started = Date.now();
       const startSwipe = msg.activeSwipeIndex; // [로컬 수정 1.6.2]
       try {
-        const got = await translateItems(todo.map((b) => ({ key: b.key, text: b.src })), { chatId, beforeId: messageId, signal, connectionId });
+        const sent = todo.length ? await translateItems(todo.map((b) => ({ key: b.key, text: b.src })), { chatId, beforeId: messageId, signal, connectionId }) : new Map();
+        const got = new Map([...local, ...sent]);
         if (preview) {
-          if (got.size < todo.length && !quiet) notify(`${todo.length - got.size}개 문단을 번역하지 못했습니다. 다시 시도해 주세요.`, "warn");
-          return { done: got.size, failed: todo.length - got.size, got };
+          if (sent.size < todo.length && !quiet) notify(`${todo.length - sent.size}개 문단을 번역하지 못했습니다. 다시 시도해 주세요.`, "warn");
+          return { done: got.size, failed: todo.length - sent.size, got };
         }
         const base = getRecord(messageId) || rec;
         const fresh = { ...base, map: { ...base.map }, edited: { ...base.edited } };
         for (const [k, v] of got) { fresh.map[k] = v; delete fresh.edited[k]; }
         fresh.view = "";
-        const failed = todo.length - got.size;
+        const failed = todo.length - sent.size;
         if ((clearedAt.get(messageId) || 0) >= started) return { done: 0, failed: 0 };
         // [로컬 수정 1.6.2] swiped away while translating → save to the original swipe only
         const nowSwipe = messageCache.get(messageId)?.activeSwipeIndex;
         const swiped = Number.isInteger(startSwipe) && Number.isInteger(nowSwipe) && nowSwipe !== startSwipe;
         if (got.size && swiped) {
           await saveRecordToSwipe(chatId, messageId, fresh, blocks, startSwipe);
-          return { done: got.size, failed: todo.length - got.size };
+          return { done: got.size, failed: todo.length - sent.size };
         }
         if (got.size) await saveRecord(chatId, messageId, fresh, blocks);
         if (failed) {
@@ -4675,7 +4731,7 @@ Spoken language (read the "- 사용 언어:" line in each speaker's voice block)
     Object.freeze({
       id: "builtin-korean-style-keep-model-dialogue",
       name: "한국어 문체·이름 중심·모델 병기 유지 (지문만 번역)",
-      prompt: withHangulRule(`Translate the narration of the source into natural Korean and keep the dialogue the model already wrote for display. Output only the result, with no notes or explanations. Preserve meaning, point of view, characterization, emotional nuance, formatting (paragraph breaks, line breaks, markdown, *asterisks*, speaker labels such as "Name |"), and the author's narrative style, pacing, imagery and register. Do not add, omit, censor, soften or invent content.
+      prompt: withHangulRule(`Translate the narration of the source into natural Korean and keep the dialogue the model already wrote for display. Output only the result, with no notes or explanations. Preserve meaning, point of view, characterization, emotional nuance, formatting (paragraph breaks, line breaks, markdown, *asterisks*), and the author's narrative style, pacing, imagery and register. Do not add, omit, censor, soften or invent content.
 
 Narration and pronouns:
 - Resolve he/she/they/him/her/his from the source, the previous context, the glossary and the character voice notes. When the referent is clear, use that person's name in the form the glossary or voice notes give, or leave the subject out where Korean reads naturally without it. Rephrase instead of repeating the same name in back-to-back clauses.
@@ -4684,15 +4740,20 @@ Narration and pronouns:
 - The voice block marked "- 역할: 유저 페르소나" is the user's persona; apply the same rule when she/her or he/him refers to that person.
 - Never guess a referent. If the source is ambiguous, keep it ambiguous in Korean rather than picking a person. Third-person narration stays third person.
 
+Speaker names:
+- In Name | "line", translate only the name; the rest stays as written.
+- In the status block under the §RP line (Name: outfit | posture | mood), translate only the name before the colon.
+- Use the glossary's form of each name, else Hangul as Koreans read it; one spelling per person. Korean names stay.
+
 Dialogue the model already wrote (keep as is):
 - Decide by the text inside the quotation marks and the parentheses after it. Ignore the speaker label ("Name |") when deciding whether a line already contains Korean.
-- A quoted dialogue line is final display text when the quote is in Korean, or when a Korean translation in parentheses follows it: "foreign line" (한국어 번역). Copy such a line exactly as written, character for character, together with its speaker label, quotation marks and parenthetical translation. Do not translate, rephrase, re-pair, reorder or correct it, even if the Korean translation looks wrong.
+- A quoted dialogue line is final display text when the quote is in Korean, or when a Korean translation in parentheses follows it: "foreign line" (한국어 번역). Copy such a line exactly as written, character for character, together with its quotation marks and parenthetical translation (the label name aside). Do not translate, rephrase, re-pair, reorder or correct it, even if the Korean translation looks wrong.
 - Never change a word inside the quoted original. Foreign words mixed into the line (chérie, señor, davvero, etc.) stay exactly as they are; do not swap them for English or any other language.
 - If a segment contains nothing but such kept lines, output the segment unchanged.
 - A dialogue line on its own (with a speaker label, or as its own paragraph) whose quote contains no Korean and has no parenthetical translation is a foreign-language line (English included) whose translation is missing: keep the original text exactly as written and add a natural Korean translation right after it, in parentheses on the same line: "original line" (한국어 번역). Write that translation in the speaker's voice, following the voice notes for speech level, sentence endings and address terms.
 - Short quotes inside a narration sentence (for example "Fine," he said.) are part of the narration: translate them into Korean with it, with no dual form.
 - Keep inline markers and tags exactly as they appear, with their attributes and position, around the same text: markers such as <x1>…</x1>, and raw tags such as <speaker="Name">…</speaker> when they appear. Never drop, move, translate, rename or add a marker or tag, and never turn a marker into a different tag.
-- Keep metadata lines such as the §RP tag exactly as written, and keep scene dividers such as *** on their own line with the blank lines around them.
+- Keep metadata lines such as the §RP tag exactly as written (except the names in its status lines), and keep scene dividers such as *** on their own line with the blank lines around them.
 - Narration, descriptions, actions and inner thoughts are always translated into Korean.`),
       replace: true,
       builtin: true,
