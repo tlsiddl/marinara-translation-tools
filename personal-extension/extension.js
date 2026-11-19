@@ -1867,7 +1867,7 @@ function createMarinaraAutomaticTranslation({
 // compare/edit, retranslate, clear, and auto-collect of glossary and character voices.
 // Used only when the chat translates with an AI connection outside Game mode;
 // every other case keeps Marinara's own translation.
-function createParagraphTranslator({ marinara, fetch: rawFetch, systemFor, scopeFor, settings, collectApply }) {
+function createParagraphTranslator({ marinara, fetch: rawFetch, systemFor, scopeFor, settings, collectApply, syncNames }) {
   const PT_KEY = "paraTranslate";
   const ACTIVE_CHAT_STORAGE_KEY = "marinara-active-chat-id";
   const MAX_TOKENS = 8192;
@@ -4012,6 +4012,9 @@ Base every line on the material. If the material says nothing about the world, r
     setTimeout(async () => {
       try {
         if (disposed) return;
+        // Names from 세계관 설정집 first (no AI request; does nothing when it is not installed), so the scan sees them as known.
+        if (typeof syncNames === "function") await syncNames(chatId);
+        if (disposed) return;
         const speech = await scanChat(chatId, "speech");
         const glossary = await scanChat(chatId, "glossary");
         if (disposed) return;
@@ -5889,6 +5892,69 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
     return added;
   }
 
+  /* ---------- names from 세계관 설정집 (World Archive) ---------- */
+
+  /* When the World Archive server module is installed, GET /api/world-archive/rooms/:chatId/names answers
+     { names: [{ original, translation, kind }] } (an empty list when the room is not linked; 404 when not installed).
+     Pairs the chat's glossary lacks (either side, ignoring case) are added through the same path as NPC 자동 수집;
+     existing lines are never changed, even when the Korean name differs. Any failure does nothing, silently. */
+  const ARCHIVE_NAMES_TIMEOUT_MS = 10000;
+  let archiveNamesReady = false;
+  const archiveNamesBusy = new Set();
+
+  /** The payload's usable pairs as scan-style { src, dst }, or null when the payload is not the expected shape. */
+  function archiveNamePairs(data) {
+    if (!data || typeof data !== "object" || !Array.isArray(data.names)) return null;
+    const pairs = [];
+    for (const entry of data.names) {
+      const src = typeof entry?.original === "string" ? entry.original.trim() : "";
+      const dst = typeof entry?.translation === "string" ? entry.translation.trim() : "";
+      // A "=" or a line break would break the "A = B" line format.
+      if (!src || !dst || /[=\r\n]/u.test(src) || /[\r\n]/u.test(dst)) continue;
+      pairs.push({ src, dst });
+    }
+    return pairs;
+  }
+
+  async function fetchArchiveNames(chatId) {
+    const controller = new AbortController();
+    const timer = marinara.setTimeout(() => controller.abort(), ARCHIVE_NAMES_TIMEOUT_MS);
+    try {
+      const res = await originalFetch.call(window, `/api/world-archive/rooms/${encodeURIComponent(chatId)}/names`, {
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      if (!res.ok) return null;
+      return archiveNamePairs(await res.json());
+    } catch {
+      return null;
+    } finally {
+      marinara.clearTimeout(timer);
+    }
+  }
+
+  /** Adds the archive's names the chat's glossary lacks; returns how many were added (0 on any failure). */
+  async function syncArchiveNames(chatId) {
+    if (!archiveNamesReady || !chatId || archiveNamesBusy.has(chatId)) return 0;
+    archiveNamesBusy.add(chatId);
+    try {
+      const pairs = await fetchArchiveNames(chatId);
+      if (!pairs?.length) return 0;
+      // Nothing new: skip the save entirely.
+      if (!selectNewCollected(currentScope(storedConfig, chatId), { speech: [], glossary: pairs }).glossary.length) return 0;
+      const added = await applyAutoCollected(chatId, { speech: [], glossary: pairs });
+      if (added.glossary) paragraph.notify(`설정집에서 이름 ${added.glossary}개를 단어장에 넣었어요`);
+      return added.glossary;
+    } catch (error) {
+      marinara.log.warn("설정집 이름 가져오기 실패", error);
+      return 0;
+    } finally {
+      archiveNamesBusy.delete(chatId);
+    }
+  }
+
   /* ---------- item editors for the glossary and voice notes ---------- */
 
   // The hidden textareas stay the stored format ("A = B" lines, "[Name]" blocks).
@@ -6911,6 +6977,7 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
     scopeFor: (chatId) => currentScope(storedConfig, chatId),
     settings: () => storedConfig?.paragraph ?? DEFAULT_PARAGRAPH,
     collectApply: applyAutoCollected,
+    syncNames: syncArchiveNames,
   });
   const automaticTranslation = createMarinaraAutomaticTranslation({
     marinara,
@@ -6935,6 +7002,7 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
     activeChatId = nextChatId;
     populateAllForms();
     paragraph.catchUpLatest(activeChatId);
+    void syncArchiveNames(activeChatId);
   }
   // Coming back to the page (phone unlocked, tab refocused) is when a lost generation shows up.
   const catchUpOnReturn = () => { if (document.visibilityState === "visible") paragraph.catchUpLatest(activeChatId); };
@@ -6988,6 +7056,9 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
     .get()
     .then((value) => {
       storedConfig = normalizeStoredConfig(value?.config);
+      // Only after the stored config really loaded: a save on top of the fallback defaults would wipe it.
+      archiveNamesReady = true;
+      void syncArchiveNames(activeChatId);
       void automaticTranslation.start(value).catch((error) => marinara.log.warn("자동 번역 초기화 실패", error));
       paragraph.start();
       injectPanels();
