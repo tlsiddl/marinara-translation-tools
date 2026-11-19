@@ -5697,6 +5697,7 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
   }
 
   function populateForm(form) {
+    form._tpgDirty = false;
     if (!storedConfig) return;
     const scope = currentScope();
     form._creatingPresetId = null;
@@ -5873,9 +5874,19 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
     return { voice, glossary };
   }
 
-  /** Saves the new items into the chat's settings and returns how many were added. */
+  /** An open settings form with edits the person has not saved yet (a background write would refresh it away). */
+  function hasUnsavedForm() {
+    for (const form of forms) if (form.isConnected && form._tpgDirty) return true;
+    return false;
+  }
+
+  /**
+   * Saves the new items into the chat's settings and returns how many were added. While a settings form has unsaved
+   * edits nothing is written ({ deferred: true }); the next collection or chat open tries again.
+   */
   async function applyAutoCollected(chatId, found) {
     let added = { voice: 0, glossary: 0 };
+    if (hasUnsavedForm()) return { ...added, deferred: true };
     await queueConfigWrite((current) => {
       const scope = currentScope(current, chatId);
       const fresh = selectNewCollected(scope, found);
@@ -5944,8 +5955,10 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
       if (!pairs?.length) return 0;
       // Nothing new: skip the save entirely.
       if (!selectNewCollected(currentScope(storedConfig, chatId), { speech: [], glossary: pairs }).glossary.length) return 0;
+      // A chat that used the default glossary gets its own (the defaults stay as they are, so other rooms don't get these names).
+      const ownBefore = !!storedConfig?.chats?.[chatId];
       const added = await applyAutoCollected(chatId, { speech: [], glossary: pairs });
-      if (added.glossary) paragraph.notify(`설정집에서 이름 ${added.glossary}개를 단어장에 넣었어요`);
+      if (added.glossary) paragraph.notify(`설정집에서 이름 ${added.glossary}개를 단어장에 넣었어요${ownBefore ? "" : " · 이 방 전용 단어장을 만들었어요"}`);
       return added.glossary;
     } catch (error) {
       marinara.log.warn("설정집 이름 가져오기 실패", error);
@@ -6628,6 +6641,11 @@ The user's persona is named "${name}". When she/her/he/him/they or similar refer
     form._appliedPresetIds = { outgoing: "builtin-inherit", incoming: "builtin-inherit" };
     form._choosingUpgrade = false;
     forms.add(form);
+    // Unsaved edits: background writes (NPC 자동 수집, 설정집 이름) refresh every form, so they wait while one is dirty.
+    form._tpgDirty = false;
+    const markDirty = (event) => { if (event.isTrusted) form._tpgDirty = true; };
+    form.addEventListener("input", markDirty);
+    form.addEventListener("change", markDirty);
     form.querySelector('[data-tpg-upgrade]').addEventListener('click', () => {
       form._choosingUpgrade = true;
       syncUpgradeControls(form);

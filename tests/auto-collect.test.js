@@ -22,6 +22,7 @@ const cut = (from, to) => {
   // ---- 1-2. pick + apply ----
   const helpers = new Function("deps", `
     const { queueConfigWrite, currentScope } = deps;
+    const forms = deps.forms || new Set();
 ${cut("  function parseGlossary(", "  function glossarySection(")}
 ${cut("  function glossaryIndex(", "  /* ---------- item editors for the glossary and voice notes")}
     return { selectNewCollected, applyAutoCollected, parseVoice, parseGlossary };`);
@@ -38,7 +39,8 @@ ${cut("  function glossaryIndex(", "  /* ---------- item editors for the glossar
   };
   const currentScope = (config, chatId) => ({ ...(config.chats[chatId] ?? config.defaults) });
   const queueConfigWrite = async (build) => { stored = build(stored); return stored; };
-  const { selectNewCollected, applyAutoCollected, parseVoice, parseGlossary } = helpers({ queueConfigWrite, currentScope });
+  const acForms = new Set();
+  const { selectNewCollected, applyAutoCollected, parseVoice, parseGlossary } = helpers({ queueConfigWrite, currentScope, forms: acForms });
 
   const found = {
     speech: [
@@ -76,6 +78,7 @@ ${cut("  function glossaryIndex(", "  /* ---------- item editors for the glossar
 
   stored.chats.c2 = { glossary: "", incomingVoicePrompt: "", incomingVoiceEnabled: false };
   await applyAutoCollected("c2", { speech: [], glossary: [{ src: "Quidditch", dst: "퀴디치" }] });
+  { const f = { isConnected: true, _tpgDirty: true }; acForms.add(f); const r = await applyAutoCollected("c3", { speech: [], glossary: [{ src: "Snitch", dst: "스니치" }] }); console.log(r.deferred && !r.glossary ? "PASS  unsaved form: NPC 자동 수집 waits" : "FAIL  unsaved form: NPC 자동 수집 waits"); if (!(r.deferred && !r.glossary)) process.exitCode = 1; acForms.delete(f); }
   check("only terms added: 대사 지침 stays off", stored.chats.c2.incomingVoiceEnabled === false && stored.chats.c2.glossary === "Quidditch = 퀴디치");
 
   // ---- 3. counter ----

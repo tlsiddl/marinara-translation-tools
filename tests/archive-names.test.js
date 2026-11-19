@@ -28,6 +28,7 @@ const cut = (from, to) => {
 
   const make = new Function("deps", `
     const { marinara, paragraph, fetch } = deps;
+    const forms = deps.forms;
     const window = {};
     const originalFetch = { call: (_self, input, init) => fetch(input, init) };
     let storedConfig = deps.initial;
@@ -46,12 +47,14 @@ ${cut("  function glossaryIndex(", "  /* ---------- item editors for the glossar
     chats: { c1: { glossary, incomingVoicePrompt: "", incomingVoiceEnabled: false } },
     defaults: { glossary: "Quidditch = 퀴디치", incomingVoicePrompt: "", incomingVoiceEnabled: false },
   };
+  const forms = new Set();
   const t = make({
     marinara: { setTimeout: (f, ms) => setTimeout(f, ms), clearTimeout: (id) => clearTimeout(id), log: { warn() {} } },
     paragraph: { notify: (text) => notices.push(text) },
     fetch: (input, init) => { requests.push({ url: String(input), init }); return server(input, init); },
     initial: JSON.parse(JSON.stringify(initial)),
     wrote: () => { writes++; },
+    forms,
   });
   const snapshot = () => JSON.stringify(t.config());
 
@@ -126,10 +129,10 @@ ${cut("  function glossaryIndex(", "  /* ---------- item editors for the glossar
 
   // 4b. a chat without its own settings
   server = async () => json({ names: [{ original: "Quidditch", translation: "퀴디치" }, { original: "Luna Lovegood", translation: "루나 러브굿" }] });
-  const defaultsBefore = JSON.stringify(t.config().defaults);
+  const defaults6 = JSON.stringify(t.config().defaults);
   const c2 = await t.syncArchiveNames("c2");
   check("a chat on the default glossary gets its own glossary: defaults + the new name, defaults untouched",
-    c2 === 1 && t.config().chats.c2.glossary === "Quidditch = 퀴디치\nLuna Lovegood = 루나 러브굿" && JSON.stringify(t.config().defaults) === defaultsBefore);
+    c2 === 1 && t.config().chats.c2.glossary === "Quidditch = 퀴디치\nLuna Lovegood = 루나 러브굿" && JSON.stringify(t.config().defaults) === defaults6);
   check("no chat id: nothing is fetched", (await (async () => { const r = requests.length; await t.syncArchiveNames(""); await t.syncArchiveNames(null); return requests.length === r; })()));
 
   // 5a. NPC 자동 수집 runs the name sync first
@@ -174,6 +177,33 @@ ${cut("  const autoCollectCounts = new Map();", "  /* ---------- toast ---------
     /storedConfig = normalizeStoredConfig\(value\?\.config\);[\s\S]*archiveNamesReady = true;[\s\S]*syncArchiveNames\(activeChatId\)/.test(onLoad)
     && onLoadFailed.length > 0 && !onLoadFailed.includes("archiveNamesReady"));
   check("the paragraph translator gets the sync", /collectApply: applyAutoCollected,\s*syncNames: syncArchiveNames,/.test(code));
+
+  // 6. a chat that used the default glossary gets its own, and the notice says so
+  notices.length = 0;
+  server = async () => json({ names: [{ original: "Rubeus Hagrid", translation: "루비우스 해그리드", kind: "인물" }] });
+  const defaultsC9 = JSON.stringify(t.config().defaults);
+  check("a chat on the default glossary gets its own copy with the new name", (await t.syncArchiveNames("c9")) === 1
+    && /Rubeus Hagrid = 루비우스 해그리드/.test(t.config().chats.c9?.glossary || "") && JSON.stringify(t.config().defaults) === defaultsC9);
+  check("the notice says a per-room glossary was made", notices.at(-1) === "설정집에서 이름 1개를 단어장에 넣었어요 · 이 방 전용 단어장을 만들었어요", notices.at(-1));
+  notices.length = 0;
+  server = async () => json({ names: [{ original: "Filius Flitwick", translation: "필리우스 플리트윅", kind: "인물" }] });
+  await t.syncArchiveNames("c9");
+  check("a chat with its own glossary gets the short notice", notices.at(-1) === "설정집에서 이름 1개를 단어장에 넣었어요", notices.at(-1));
+
+  // 7. unsaved edits in an open settings form: nothing is written now, the next round writes
+  const form = { isConnected: true, _tpgDirty: true };
+  forms.add(form);
+  server = async () => json({ names: [{ original: "Pomona Sprout", translation: "포모나 스프라우트", kind: "인물" }] });
+  const before7 = snapshot(); const w7 = writes; notices.length = 0;
+  check("with unsaved edits open nothing is written and no notice shows", (await t.syncArchiveNames("c9")) === 0 && snapshot() === before7 && writes === w7 && notices.length === 0);
+  form._tpgDirty = false;
+  check("after the edits are saved the next round adds the name", (await t.syncArchiveNames("c9")) === 1 && /Pomona Sprout/.test(t.config().chats.c9.glossary));
+  form.isConnected = false; form._tpgDirty = true;
+  server = async () => json({ names: [{ original: "Argus Filch", translation: "아거스 필치", kind: "인물" }] });
+  check("a closed form does not hold writes back", (await t.syncArchiveNames("c9")) === 1);
+  check("forms are marked dirty only by the person's own input", /form\._tpgDirty = false;\s*const markDirty = \(event\) => \{ if \(event\.isTrusted\) form\._tpgDirty = true; \};/.test(code)
+    && /function populateForm\(form\) \{\s*form\._tpgDirty = false;/.test(code));
+  check("NPC 자동 수집 writes go through the same guard", /async function applyAutoCollected\(chatId, found\) \{\s*let added = \{ voice: 0, glossary: 0 \};\s*if \(hasUnsavedForm\(\)\) return \{ \.\.\.added, deferred: true \};/.test(code));
 
   console.log(failed ? `\n${failed} FAILED` : "\nall passed");
   process.exit(failed ? 1 : 0);
